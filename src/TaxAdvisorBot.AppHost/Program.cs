@@ -2,8 +2,10 @@
 
 var builder = DistributedApplication.CreateBuilder(args);
 
+var redis = builder.AddRedis("cache");
+
 var web = builder.AddCSharpApp("web", "../platforms/TaxAdvisorBot.Web/TaxAdvisorBot.Web.csproj")
-    .WithHttpEndpoint(targetPort: 5000, name: "http")
-    .WithExternalHttpEndpoints();
+    .WithExternalHttpEndpoints()
+    .WithReference(redis);
 
 builder.Build().Run();

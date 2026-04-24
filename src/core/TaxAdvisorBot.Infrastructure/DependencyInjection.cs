@@ -1,12 +1,15 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 
 namespace TaxAdvisorBot.Infrastructure;
 
 public static class DependencyInjection
 {
-    public static IServiceCollection AddInfrastructureServices(this IServiceCollection services)
+    public static IHostApplicationBuilder AddInfrastructureServices(this IHostApplicationBuilder builder)
     {
+        builder.AddRedisDistributedCache("cache");
+
         // Service registrations will be added in later tasks.
-        return services;
+        return builder;
     }
 }

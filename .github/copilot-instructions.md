@@ -1,5 +1,14 @@
 # TaxAdvisorBot — Copilot Instructions
 
+## Scope
+
+- **Personal tax advisor for physical persons** (DPFO — daň z příjmů fyzických osob).
+- Focus: yearly income tax return for an employed person with stock compensation.
+- Key income types: §6 employment, §10 share sales (with 3-year exemption rule under §4 odst. 1 písm. w), RSU vesting, ESPP discount (10%).
+- Key deductions (§15): pension fund, life insurance, mortgage interest, charitable donations.
+- Key credits (§35ba/§35c): basic taxpayer, spouse, student, child tax benefit.
+- **Output**: uploadable XML file (Czech Financial Administration EPO schema) + PDF form.
+
 ## Architecture
 
 - Clean Architecture: Domain → Application → Infrastructure → Platforms.
@@ -36,9 +45,10 @@
 ## .NET Aspire
 
 - `TaxAdvisorBot.AppHost` is the Aspire orchestrator project.
-- All infrastructure dependencies (Qdrant, message queues) are declared in AppHost.
+- All infrastructure dependencies (Qdrant, Redis, message queues) are declared in AppHost.
+- **Redis** is used for distributed caching (exchange rates, session data). Registered via `AddRedis("cache")` in AppHost, consumed via `IDistributedCache` / `AddRedisDistributedCache("cache")` in Infrastructure.
 - Use `ServiceDefaults` for shared telemetry, health checks, and resilience.
-- Docker is available for running dependencies locally (Qdrant, RabbitMQ, etc.).
+- Docker is available for running dependencies locally (Qdrant, Redis, RabbitMQ, etc.).
 
 ## Real-Time & Async
 
