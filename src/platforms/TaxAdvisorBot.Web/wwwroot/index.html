@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TaxAdvisorBot — Legal Search</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f5f5f5; color: #333; }
+        .container { max-width: 900px; margin: 0 auto; padding: 20px; }
+        h1 { margin-bottom: 8px; }
+        .subtitle { color: #666; margin-bottom: 24px; }
+
+        .search-box { display: flex; gap: 8px; margin-bottom: 16px; }
+        .search-box input[type="text"] { flex: 1; padding: 12px; font-size: 16px; border: 2px solid #ddd; border-radius: 8px; }
+        .search-box input[type="number"] { width: 80px; padding: 12px; font-size: 16px; border: 2px solid #ddd; border-radius: 8px; }
+        .search-box button { padding: 12px 24px; font-size: 16px; background: #0066cc; color: white; border: none; border-radius: 8px; cursor: pointer; }
+        .search-box button:hover { background: #0052a3; }
+
+        .ingest-section { background: #fff3cd; padding: 16px; border-radius: 8px; margin-bottom: 24px; border: 1px solid #ffc107; }
+        .ingest-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+        .ingest-header .right { display: flex; gap: 8px; align-items: center; }
+        .source-list { list-style: none; }
+        .source-item { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #f0e6c8; }
+        .source-item:last-child { border-bottom: none; }
+        .source-info { flex: 1; }
+        .source-name { font-weight: 600; font-size: 14px; }
+        .source-desc { font-size: 12px; color: #856404; }
+        .source-url { font-size: 11px; color: #999; word-break: break-all; }
+        .source-status { font-size: 12px; min-width: 100px; text-align: right; margin-right: 8px; }
+        .source-status.ingesting { color: #1565c0; }
+        .source-status.done { color: #2e7d32; }
+        .source-status.error { color: #c62828; }
+        button.sm { padding: 4px 12px; font-size: 12px; border: none; border-radius: 4px; cursor: pointer; }
+        button.sm.green { background: #28a745; color: white; }
+        button.sm.green:hover { background: #218838; }
+        button.sm.green:disabled { background: #ccc; cursor: not-allowed; }
+        button.ingest-all { padding: 8px 16px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; }
+        button.ingest-all:hover { background: #218838; }
+        button.ingest-all:disabled { background: #ccc; cursor: not-allowed; }
+
+        .results { margin-top: 16px; }
+        .result-card { background: white; border: 1px solid #e0e0e0; border-radius: 8px; padding: 16px; margin-bottom: 12px; }
+        .result-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+        .result-header h3 { color: #0066cc; }
+        .score { background: #e8f5e9; color: #2e7d32; padding: 2px 8px; border-radius: 12px; font-size: 13px; }
+        .score.low { background: #fff3e0; color: #e65100; }
+        .result-text { white-space: pre-wrap; font-size: 14px; line-height: 1.6; color: #444; max-height: 200px; overflow-y: auto; }
+        .result-meta { margin-top: 8px; font-size: 12px; color: #888; }
+        .result-meta a { color: #0066cc; }
+
+        .status { padding: 12px; border-radius: 8px; margin-bottom: 16px; text-align: center; }
+        .status.loading { background: #e3f2fd; color: #1565c0; }
+        .status.error { background: #ffebee; color: #c62828; }
+        .empty { text-align: center; padding: 40px; color: #999; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>TaxAdvisorBot</h1>
+        <p class="subtitle">Czech Tax Law — Legal Search (RAG)</p>
+
+        <div class="ingest-section">
+            <div class="ingest-header">
+                <div>
+                    <h3>Knowledge Base</h3>
+                    <p style="font-size:13px; color:#856404;">Sources loaded from appsettings.json</p>
+                </div>
+                <div class="right">
+                    <label style="font-size:13px;">Year:</label>
+                    <input type="number" id="ingestYear" value="2025" min="2020" max="2030" style="width:70px; padding:4px; border:1px solid #ccc; border-radius:4px;">
+                    <button class="ingest-all" id="ingestAllBtn" onclick="ingestAll()">Ingest All</button>
+                    <button class="ingest-all" id="batchBtn" onclick="batchIngest()" style="background:#6f42c1;">Batch API</button>
+                </div>
+            </div>
+            <ul class="source-list" id="sourceList">
+                <li style="color:#999; padding:12px; text-align:center;">Loading sources...</li>
+            </ul>
+        </div>
+
+        <div class="search-box">
+            <input type="text" id="query" placeholder="Search Czech tax law... (e.g. 'RSU vesting tax' or '§ 10')" autofocus>
+            <input type="number" id="year" value="2025" min="2020" max="2030" title="Tax year">
+            <button onclick="search()">Search</button>
+        </div>
+
+        <div id="status"></div>
+        <div id="results" class="results">
+            <div class="empty">Enter a query to search the Czech tax law knowledge base.</div>
+        </div>
+    </div>
+
+    <script>
+        let sources = [];
+
+        document.getElementById('query').addEventListener('keydown', e => {
+            if (e.key === 'Enter') search();
+        });
+
+        (async function loadSources() {
+            try {
+                const res = await fetch('/api/sources');
+                sources = await res.json();
+                renderSources();
+            } catch (err) {
+                document.getElementById('sourceList').innerHTML =
+                    `<li style="color:#c62828; padding:12px;">Failed to load sources: ${err.message}</li>`;
+            }
+        })();
+
+        function renderSources() {
+            const list = document.getElementById('sourceList');
+            if (sources.length === 0) {
+                list.innerHTML = '<li style="color:#999; padding:12px;">No sources configured in appsettings.json</li>';
+                return;
+            }
+            list.innerHTML = sources.map((s, i) => `
+                <li class="source-item">
+                    <div class="source-info">
+                        <div class="source-name">${esc(s.name)}</div>
+                        <div class="source-desc">${esc(s.description || '')}</div>
+                        <div class="source-url">${esc(s.url)}</div>
+                    </div>
+                    <span class="source-status" id="ss-${i}"></span>
+                    <button class="sm green" id="sb-${i}" onclick="ingestOne(${i})">Ingest</button>
+                </li>
+            `).join('');
+        }
+
+        async function ingestOne(i) {
+            const s = sources[i];
+            const year = parseInt(document.getElementById('ingestYear').value);
+            const btn = document.getElementById(`sb-${i}`);
+            const st = document.getElementById(`ss-${i}`);
+
+            btn.disabled = true;
+            st.className = 'source-status ingesting';
+            st.textContent = 'Starting...';
+
+            try {
+                // Start background job
+                const res = await fetch('/api/ingest', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ url: s.url, year })
+                });
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const { jobId } = await res.json();
+
+                // Poll for completion
+                st.textContent = 'Ingesting...';
+                while (true) {
+                    await new Promise(r => setTimeout(r, 3000));
+                    const poll = await fetch(`/api/ingest/${jobId}`);
+                    const job = await poll.json();
+
+                    if (job.status === 'done') {
+                        st.className = 'source-status done';
+                        st.textContent = `${job.chunksIngested} chunks`;
+                        break;
+                    } else if (job.status === 'error') {
+                        throw new Error(job.error);
+                    }
+                    // still ingesting — keep polling
+                }
+            } catch (err) {
+                st.className = 'source-status error';
+                st.textContent = err.message;
+            } finally {
+                btn.disabled = false;
+            }
+        }
+
+        async function ingestAll() {
+            const btn = document.getElementById('ingestAllBtn');
+            btn.disabled = true;
+            btn.textContent = 'Resetting...';
+
+            // Wipe the collection first
+            try {
+                await fetch('/api/ingest/reset', { method: 'POST' });
+            } catch (err) {
+                console.warn('Reset failed:', err);
+            }
+
+            btn.textContent = 'Ingesting...';
+            for (let i = 0; i < sources.length; i++) await ingestOne(i);
+            btn.disabled = false;
+            btn.textContent = 'Ingest All';
+        }
+
+        async function batchIngest() {
+            const btn = document.getElementById('batchBtn');
+            const year = parseInt(document.getElementById('ingestYear').value);
+            const statusEl = document.getElementById('status');
+
+            btn.disabled = true;
+            btn.textContent = 'Starting...';
+            statusEl.className = 'status loading';
+            statusEl.textContent = 'Starting batch ingestion...';
+
+            try {
+                const res = await fetch('/api/batch-ingest', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ year })
+                });
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+                // Poll batch status
+                while (true) {
+                    await new Promise(r => setTimeout(r, 5000));
+                    const poll = await fetch('/api/batch-ingest/status');
+                    const s = await poll.json();
+
+                    let msg = `[${s.phase}]`;
+                    if (s.currentSource) msg += ` ${s.currentSource}`;
+                    if (s.batchStatus) msg += ` — Azure batch: ${s.batchStatus}`;
+                    if (s.completedRequests) msg += ` (${s.completedRequests}/${s.totalBatchRequests} requests)`;
+                    if (s.storedChunks) msg += ` — Stored: ${s.storedChunks}/${s.totalChunks} chunks`;
+                    statusEl.textContent = msg;
+
+                    if (s.phase === 'Done') {
+                        statusEl.className = 'status';
+                        statusEl.style.background = '#e8f5e9';
+                        statusEl.style.color = '#2e7d32';
+                        statusEl.textContent = `Batch ingestion complete: ${s.storedChunks} chunks stored from ${s.totalSources} sources.`;
+                        break;
+                    } else if (s.phase === 'Error') {
+                        throw new Error(s.error);
+                    }
+                }
+            } catch (err) {
+                statusEl.className = 'status error';
+                statusEl.textContent = `Batch error: ${err.message}`;
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Batch API';
+            }
+        }
+
+        async function search() {
+            const query = document.getElementById('query').value.trim();
+            const year = document.getElementById('year').value;
+            if (!query) return;
+
+            const statusEl = document.getElementById('status');
+            const resultsEl = document.getElementById('results');
+            statusEl.className = 'status loading';
+            statusEl.textContent = 'Searching...';
+            resultsEl.innerHTML = '';
+
+            try {
+                const res = await fetch(`/api/search?q=${encodeURIComponent(query)}&year=${year}`);
+                if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+                const data = await res.json();
+                statusEl.className = '';
+                statusEl.textContent = '';
+
+                if (data.length === 0) {
+                    resultsEl.innerHTML = '<div class="empty">No results found above the relevance threshold.</div>';
+                    return;
+                }
+
+                resultsEl.innerHTML = data.map(r => `
+                    <div class="result-card">
+                        <div class="result-header">
+                            <h3>§ ${r.paragraphId}${r.subParagraph ? ' ' + r.subParagraph : ''}</h3>
+                            <span class="score ${r.relevanceScore < 0.75 ? 'low' : ''}">${(r.relevanceScore * 100).toFixed(1)}%</span>
+                        </div>
+                        <div class="result-text">${esc(r.textContent)}</div>
+                        ${r.sourceUrl ? `<div class="result-meta"><a href="${r.sourceUrl}" target="_blank">Source</a></div>` : ''}
+                    </div>
+                `).join('');
+            } catch (err) {
+                statusEl.className = 'status error';
+                statusEl.textContent = `Error: ${err.message}`;
+            }
+        }
+
+        function esc(t) { const d = document.createElement('div'); d.textContent = t; return d.innerHTML; }
+    </script>
+</body>
+</html>

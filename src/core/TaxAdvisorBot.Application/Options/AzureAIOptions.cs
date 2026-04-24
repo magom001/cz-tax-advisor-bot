@@ -28,6 +28,13 @@ public sealed class AzureAIOptions
     /// <summary>Reasoning model for multi-step tax planning and verification (e.g. "o4-mini").</summary>
     public string? ReasoningDeploymentName { get; set; }
 
+    /// <summary>Global Batch deployment name for bulk processing (e.g. "gpt-4.1-mini-batch"). Uses cognitiveservices endpoint.</summary>
+    public string? BatchDeploymentName { get; set; }
+
+    /// <summary>Endpoint URL for batch API (cognitiveservices.azure.com). Falls back to Endpoint if not set.</summary>
+    [Url]
+    public string? BatchEndpoint { get; set; }
+
     /// <summary>Deployment name for the embedding model (e.g. "text-embedding-ada-002").</summary>
     [Required]
     public string EmbeddingDeploymentName { get; set; } = string.Empty;

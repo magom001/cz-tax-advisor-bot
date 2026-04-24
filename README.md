@@ -28,15 +28,16 @@ The Aspire dashboard will open in your browser showing all services, Redis, and 
 
 Go to [Azure AI Foundry](https://ai.azure.com) and deploy the following models:
 
-| Deployment Name | Model | Purpose |
-|---|---|---|
-| `gpt-4.1` | GPT-4.1 | Primary chat — legal analysis, complex tax questions, citation generation |
-| `gpt-4.1-mini` | GPT-4.1 Mini | Fast/cheap — document data extraction, classification, simple Q&A |
-| `o4-mini` | o4-mini | Reasoning — multi-step tax planning, verification, edge case analysis |
-| `text-embedding-ada-002` | text-embedding-ada-002 | Embeddings — vectorization of Czech tax law for RAG search |
-| `gpt-5.1` | GPT-5.1 | (Optional) Premium model for the most complex legal reasoning |
+| Deployment Name | Model | Type | Purpose |
+|---|---|---|---|
+| `gpt-4.1` | GPT-4.1 | Global Standard | Primary chat — legal analysis, complex tax questions, citation generation |
+| `gpt-4.1-mini` | GPT-4.1 Mini | Global Standard | Fast/cheap — document data extraction, classification, simple Q&A |
+| `gpt-4.1-mini-batch` | GPT-4.1 Mini | **Global Batch** | Batch ingestion — 50% cheaper, for bulk legal text processing |
+| `o4-mini` | o4-mini | Global Standard | Reasoning — multi-step tax planning, verification, edge case analysis |
+| `text-embedding-ada-002` | text-embedding-ada-002 | Standard | Embeddings — vectorization of Czech tax law for RAG search |
+| `gpt-5.1` | GPT-5.1 | Global Standard | (Optional) Premium model for the most complex legal reasoning |
 
-> **Note:** Deployment names can be customized. Use whatever names you set in Azure AI Foundry — just match them in the configuration below.
+> **Note:** The batch deployment uses a different endpoint: `https://<your-resource>.cognitiveservices.azure.com/` (not `openai.azure.com`).
 
 ### 2. Get Your Endpoint and API Key
 
@@ -60,6 +61,8 @@ dotnet user-secrets set "AzureAI:ChatDeploymentName" "gpt-4.1"
 dotnet user-secrets set "AzureAI:FastChatDeploymentName" "gpt-4.1-mini"
 dotnet user-secrets set "AzureAI:ReasoningDeploymentName" "o4-mini"
 dotnet user-secrets set "AzureAI:EmbeddingDeploymentName" "text-embedding-ada-002"
+dotnet user-secrets set "AzureAI:BatchDeploymentName" "gpt-4.1-mini-batch"
+dotnet user-secrets set "AzureAI:BatchEndpoint" "https://<your-resource>.cognitiveservices.azure.com/"
 ```
 
 #### CLI Platform
@@ -74,6 +77,8 @@ dotnet user-secrets set "AzureAI:ChatDeploymentName" "gpt-4.1"
 dotnet user-secrets set "AzureAI:FastChatDeploymentName" "gpt-4.1-mini"
 dotnet user-secrets set "AzureAI:ReasoningDeploymentName" "o4-mini"
 dotnet user-secrets set "AzureAI:EmbeddingDeploymentName" "text-embedding-ada-002"
+dotnet user-secrets set "AzureAI:BatchDeploymentName" "gpt-4.1-mini-batch"
+dotnet user-secrets set "AzureAI:BatchEndpoint" "https://<your-resource>.cognitiveservices.azure.com/"
 ```
 
 ### 4. Verify Configuration
@@ -108,7 +113,9 @@ All options are in the `AzureAI` section. Matching C# class: `AzureAIOptions`.
 | `AzureAI:FastChatDeploymentName` | Yes | Fast/cheap model (e.g. `gpt-4.1-mini`) |
 | `AzureAI:ReasoningDeploymentName` | No | Reasoning model (e.g. `o4-mini`) |
 | `AzureAI:EmbeddingDeploymentName` | Yes | Embedding model (e.g. `text-embedding-ada-002`) |
-| `Qdrant:Endpoint` | Yes | Qdrant vector DB URL (default: managed by Aspire) |
+| `AzureAI:BatchDeploymentName` | No | Global Batch deployment (e.g. `gpt-4.1-mini-batch`) |
+| `AzureAI:BatchEndpoint` | No | Batch API endpoint (`cognitiveservices.azure.com`). Falls back to `Endpoint` |
+| `Qdrant:ConnectionString` | Yes | Qdrant connection string (injected by Aspire) |
 | `Qdrant:CollectionName` | Yes | Collection name (default: `czech-tax`) |
 | `Qdrant:VectorSize` | Yes | Embedding dimensions (default: `1536`) |
 

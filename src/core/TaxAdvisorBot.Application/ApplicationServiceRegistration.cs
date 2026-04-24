@@ -34,6 +34,9 @@ public static class ApplicationServiceRegistration
             .ValidateDataAnnotations()
             .ValidateOnStart();
 
+        builder.Services.AddOptions<LegalSourcesOptions>()
+            .BindConfiguration(LegalSourcesOptions.SectionName);
+
         return builder;
     }
 }

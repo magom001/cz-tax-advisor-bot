@@ -26,11 +26,15 @@ public static class SemanticKernelRegistration
 
             var builder = Kernel.CreateBuilder();
 
+            // LLM calls for ingestion can take minutes — use a long-lived HttpClient
+            var httpClient = new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
+
             builder.AddAzureOpenAIChatCompletion(
                 deploymentName: options.ChatDeploymentName,
                 endpoint: options.Endpoint,
                 apiKey: options.ApiKey,
-                serviceId: "chat");
+                serviceId: "chat",
+                httpClient: httpClient);
 
             if (!string.IsNullOrEmpty(options.FastChatDeploymentName))
             {
@@ -38,7 +42,8 @@ public static class SemanticKernelRegistration
                     deploymentName: options.FastChatDeploymentName,
                     endpoint: options.Endpoint,
                     apiKey: options.ApiKey,
-                    serviceId: "fast-chat");
+                    serviceId: "fast-chat",
+                    httpClient: httpClient);
             }
 
             if (!string.IsNullOrEmpty(options.ReasoningDeploymentName))
@@ -47,7 +52,8 @@ public static class SemanticKernelRegistration
                     deploymentName: options.ReasoningDeploymentName,
                     endpoint: options.Endpoint,
                     apiKey: options.ApiKey,
-                    serviceId: "reasoning");
+                    serviceId: "reasoning",
+                    httpClient: httpClient);
             }
 
             var kernel = builder.Build();
