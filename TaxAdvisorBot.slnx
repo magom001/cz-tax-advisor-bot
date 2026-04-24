@@ -1,2 +1,20 @@
 <Solution>
+  <Folder Name="/src/">
+    <Project Path="src/TaxAdvisorBot.AppHost/TaxAdvisorBot.AppHost.csproj" />
+    <Project Path="src/TaxAdvisorBot.ServiceDefaults/TaxAdvisorBot.ServiceDefaults.csproj" />
+  </Folder>
+  <Folder Name="/src/core/">
+    <Project Path="src/core/TaxAdvisorBot.Application/TaxAdvisorBot.Application.csproj" />
+    <Project Path="src/core/TaxAdvisorBot.Domain/TaxAdvisorBot.Domain.csproj" />
+    <Project Path="src/core/TaxAdvisorBot.Infrastructure/TaxAdvisorBot.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/src/platforms/">
+    <Project Path="src/platforms/TaxAdvisorBot.Cli/TaxAdvisorBot.Cli.csproj" />
+    <Project Path="src/platforms/TaxAdvisorBot.Web/TaxAdvisorBot.Web.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/TaxAdvisorBot.Application.Tests/TaxAdvisorBot.Application.Tests.csproj" />
+    <Project Path="tests/TaxAdvisorBot.Domain.Tests/TaxAdvisorBot.Domain.Tests.csproj" />
+    <Project Path="tests/TaxAdvisorBot.Infrastructure.Tests/TaxAdvisorBot.Infrastructure.Tests.csproj" />
+  </Folder>
 </Solution>

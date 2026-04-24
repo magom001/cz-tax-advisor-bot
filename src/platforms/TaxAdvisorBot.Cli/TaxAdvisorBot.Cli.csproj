@@ -1,0 +1,13 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\core\TaxAdvisorBot.Application\TaxAdvisorBot.Application.csproj" />
+    <ProjectReference Include="..\..\core\TaxAdvisorBot.Infrastructure\TaxAdvisorBot.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\TaxAdvisorBot.ServiceDefaults\TaxAdvisorBot.ServiceDefaults.csproj" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+
+</Project>

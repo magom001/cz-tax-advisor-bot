@@ -1,0 +1,9 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\TaxAdvisorBot.Domain\TaxAdvisorBot.Domain.csproj" />
+  </ItemGroup>
+
+
+
+</Project>
