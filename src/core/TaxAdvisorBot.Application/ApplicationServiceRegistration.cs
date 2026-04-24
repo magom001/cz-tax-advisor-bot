@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using TaxAdvisorBot.Application.Options;
@@ -21,6 +22,15 @@ public static class ApplicationServiceRegistration
 
         builder.Services.AddOptions<QdrantOptions>()
             .BindConfiguration(QdrantOptions.SectionName)
+            .Configure<IConfiguration>((options, config) =>
+            {
+                // Aspire injects the connection string as ConnectionStrings:qdrant
+                var connectionString = config.GetConnectionString("qdrant");
+                if (!string.IsNullOrEmpty(connectionString) && string.IsNullOrEmpty(options.ConnectionString))
+                {
+                    options.ConnectionString = connectionString;
+                }
+            })
             .ValidateDataAnnotations()
             .ValidateOnStart();
 

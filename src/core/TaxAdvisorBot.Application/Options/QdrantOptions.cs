@@ -9,9 +9,9 @@ public sealed class QdrantOptions
 {
     public const string SectionName = "Qdrant";
 
-    /// <summary>Qdrant HTTP endpoint URL.</summary>
-    [Required, Url]
-    public string Endpoint { get; set; } = string.Empty;
+    /// <summary>Qdrant connection string (e.g. "Endpoint=http://localhost:6333;Key=xxx"). Injected by Aspire or set manually.</summary>
+    [Required]
+    public string ConnectionString { get; set; } = string.Empty;
 
     /// <summary>Name of the collection to use for legal text search.</summary>
     [Required]

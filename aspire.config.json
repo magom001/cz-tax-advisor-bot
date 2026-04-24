@@ -1,0 +1,5 @@
+{
+  "appHost": {
+    "path": "src/TaxAdvisorBot.AppHost/TaxAdvisorBot.AppHost.csproj"
+  }
+}

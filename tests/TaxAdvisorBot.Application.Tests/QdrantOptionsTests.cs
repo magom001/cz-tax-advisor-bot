@@ -17,7 +17,7 @@ public sealed class QdrantOptionsTests
     {
         var options = new QdrantOptions
         {
-            Endpoint = "http://localhost:6333",
+            ConnectionString = "Endpoint=http://localhost:6333;Key=test123",
             CollectionName = "czech-tax-2025",
             VectorSize = 1536,
         };
@@ -28,7 +28,7 @@ public sealed class QdrantOptionsTests
     }
 
     [Fact]
-    public void Missing_Endpoint_FailsValidation()
+    public void Missing_ConnectionString_FailsValidation()
     {
         var options = new QdrantOptions
         {
@@ -37,7 +37,7 @@ public sealed class QdrantOptionsTests
 
         var results = Validate(options);
 
-        Assert.Contains(results, r => r.MemberNames.Contains(nameof(QdrantOptions.Endpoint)));
+        Assert.Contains(results, r => r.MemberNames.Contains(nameof(QdrantOptions.ConnectionString)));
     }
 
     [Fact]
@@ -45,7 +45,7 @@ public sealed class QdrantOptionsTests
     {
         var options = new QdrantOptions
         {
-            Endpoint = "http://localhost:6333",
+            ConnectionString = "Endpoint=http://localhost:6333",
             VectorSize = 0,
         };
 
@@ -59,7 +59,7 @@ public sealed class QdrantOptionsTests
     {
         var options = new QdrantOptions
         {
-            Endpoint = "http://localhost:6333",
+            ConnectionString = "Endpoint=http://localhost:6333",
             VectorSize = -1,
         };
 
@@ -73,7 +73,7 @@ public sealed class QdrantOptionsTests
     {
         var options = new QdrantOptions
         {
-            Endpoint = "http://localhost:6333",
+            ConnectionString = "Endpoint=http://localhost:6333",
         };
 
         Assert.Equal("czech-tax", options.CollectionName);
