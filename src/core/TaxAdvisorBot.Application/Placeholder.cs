@@ -1,1 +1,0 @@
-namespace TaxAdvisorBot.Application;

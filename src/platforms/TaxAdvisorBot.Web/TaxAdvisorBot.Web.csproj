@@ -1,4 +1,5 @@
-<Project Sdk="Microsoft.NET.Sdk.Web">
+﻿<Project Sdk="Microsoft.NET.Sdk.Web"><PropertyGroup>  <UserSecretsId>2cbddceb-d55b-44fc-aacb-8134d1f4e767</UserSecretsId>
+  </PropertyGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\..\core\TaxAdvisorBot.Application\TaxAdvisorBot.Application.csproj" />

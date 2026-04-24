@@ -8,6 +8,7 @@
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
+    <UserSecretsId>c2170e00-42d3-4e07-9229-08559ee0a3bd</UserSecretsId>
   </PropertyGroup>
 
 </Project>
