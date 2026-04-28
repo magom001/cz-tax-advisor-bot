@@ -3,6 +3,8 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Microsoft.SemanticKernel;
+using Microsoft.SemanticKernel.Connectors.Qdrant;
+using Microsoft.SemanticKernel.Data;
 using MongoDB.Driver;
 using Qdrant.Client;
 using TaxAdvisorBot.Application.Interfaces;
@@ -11,6 +13,11 @@ using TaxAdvisorBot.Infrastructure.AI;
 using TaxAdvisorBot.Infrastructure.ExchangeRates;
 using TaxAdvisorBot.Infrastructure.Persistence;
 using TaxAdvisorBot.Infrastructure.Search;
+
+#pragma warning disable SKEXP0001 // TextSearchProvider is experimental
+#pragma warning disable SKEXP0010 // Embedding API is experimental
+#pragma warning disable SKEXP0020 // Qdrant vector store connector is experimental
+#pragma warning disable SKEXP0130 // TextSearchProvider is experimental
 
 namespace TaxAdvisorBot.Infrastructure;
 
@@ -83,8 +90,25 @@ public static class DependencyInjection
         builder.Services.AddSingleton<IConversationRepository, MongoConversationRepository>();
         builder.Services.AddSingleton<ITaxReturnRepository, MongoTaxReturnRepository>();
 
-        // Legal search
+        // Legal search (legacy — direct Qdrant queries)
         builder.Services.AddSingleton<ILegalSearchService, QdrantLegalSearchService>();
+
+        // TextSearchProvider for RAG — used by the agent to auto-retrieve legal text
+        // Uses our existing QdrantLegalSearchService wrapped as ITextSearch
+        builder.Services.AddSingleton<TextSearchProvider>(sp =>
+        {
+            var searchService = sp.GetRequiredService<ILegalSearchService>();
+            var textSearch = new LegalTextSearchAdapter(searchService);
+
+            return new TextSearchProvider(textSearch, options: new TextSearchProviderOptions
+            {
+                Top = 5,
+                SearchTime = TextSearchProviderOptions.RagBehavior.BeforeAIInvoke,
+            });
+        });
+
+        // Tax advisor agent (ChatCompletionAgent with RAG + plugins)
+        builder.Services.AddSingleton<IConversationService, TaxAdvisorAgentService>();
 
         // Content extraction pipeline (HTML → strip tags, PDF → PdfPig, plain text → passthrough)
         builder.Services.AddSingleton<ContentExtractor>();

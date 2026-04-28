@@ -20,6 +20,24 @@ var ingestionJobs = new ConcurrentDictionary<string, IngestionJob>();
 app.MapDefaultEndpoints();
 app.UseStaticFiles();
 
+// Chat API — streaming tax advisor
+app.MapGet("/api/chat", async (string message, string? sessionId, IConversationService chat, HttpContext ctx, CancellationToken ct) =>
+{
+    var sid = sessionId ?? Guid.NewGuid().ToString("N")[..8];
+
+    ctx.Response.ContentType = "text/event-stream";
+    ctx.Response.Headers.CacheControl = "no-cache";
+
+    await foreach (var chunk in chat.ChatAsync(sid, message, ct))
+    {
+        await ctx.Response.WriteAsync($"data: {chunk.Replace("\n", "\\n")}\n\n", ct);
+        await ctx.Response.Body.FlushAsync(ct);
+    }
+
+    await ctx.Response.WriteAsync($"event: done\ndata: {sid}\n\n", ct);
+    await ctx.Response.Body.FlushAsync(ct);
+});
+
 // Sources catalog from appsettings
 app.MapGet("/api/sources", (IOptions<LegalSourcesOptions> options) =>
     Results.Ok(options.Value.Sources));
@@ -33,7 +51,17 @@ app.MapGet("/api/search", async (string q, int? year, ILegalSearchService search
 
 // Uniform exchange rates
 app.MapGet("/api/rates", async (IUniformRateRepository repo, CancellationToken ct) =>
-    Results.Ok(await repo.GetAllAsync(ct)));
+{
+    try
+    {
+        var rates = await repo.GetAllAsync(ct);
+        return Results.Ok(rates);
+    }
+    catch (Exception ex)
+    {
+        return Results.Ok(Array.Empty<object>()); // Return empty list if MongoDB not ready
+    }
+});
 
 app.MapPost("/api/rates", async (UniformRateRequest req, IUniformRateRepository repo, CancellationToken ct) =>
 {

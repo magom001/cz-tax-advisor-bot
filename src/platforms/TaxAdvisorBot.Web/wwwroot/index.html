@@ -107,8 +107,20 @@
             </div>
         </div>
 
+        <!-- Chat Section -->
+        <div style="background:#fff; border:2px solid #0066cc; border-radius:8px; padding:16px; margin-bottom:24px;">
+            <h3 style="margin-bottom:8px;">Tax Advisor Chat</h3>
+            <div id="chatMessages" style="max-height:400px; overflow-y:auto; border:1px solid #e0e0e0; border-radius:4px; padding:12px; margin-bottom:8px; min-height:100px; background:#fafafa;">
+                <div style="color:#999; text-align:center;">Ask a tax question...</div>
+            </div>
+            <div style="display:flex; gap:8px;">
+                <input type="text" id="chatInput" placeholder="e.g. How do I tax my RSU income?" style="flex:1; padding:10px; font-size:15px; border:2px solid #ddd; border-radius:8px;">
+                <button onclick="sendChat()" style="padding:10px 20px; font-size:15px; background:#0066cc; color:white; border:none; border-radius:8px; cursor:pointer;">Send</button>
+            </div>
+        </div>
+
         <div class="search-box">
-            <input type="text" id="query" placeholder="Search Czech tax law... (e.g. 'RSU vesting tax' or '§ 10')" autofocus>
+            <input type="text" id="query" placeholder="Search Czech tax law... (e.g. 'RSU vesting tax' or '§ 10')">
             <input type="number" id="year" value="2025" min="2020" max="2030" title="Tax year">
             <button onclick="search()">Search</button>
         </div>
@@ -121,10 +133,73 @@
 
     <script>
         let sources = [];
+        let chatSessionId = null;
 
         document.getElementById('query').addEventListener('keydown', e => {
             if (e.key === 'Enter') search();
         });
+        document.getElementById('chatInput').addEventListener('keydown', e => {
+            if (e.key === 'Enter') sendChat();
+        });
+
+        async function sendChat() {
+            const input = document.getElementById('chatInput');
+            const message = input.value.trim();
+            if (!message) return;
+
+            const messagesDiv = document.getElementById('chatMessages');
+
+            // Clear placeholder
+            if (!chatSessionId) messagesDiv.innerHTML = '';
+
+            // Show user message
+            messagesDiv.innerHTML += `<div style="margin-bottom:8px;"><strong>You:</strong> ${esc(message)}</div>`;
+            input.value = '';
+
+            // Show assistant placeholder
+            const assistantDiv = document.createElement('div');
+            assistantDiv.style.marginBottom = '8px';
+            assistantDiv.innerHTML = '<strong>Advisor:</strong> <span class="typing" style="color:#999;">thinking...</span>';
+            messagesDiv.appendChild(assistantDiv);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+
+            try {
+                const url = `/api/chat?message=${encodeURIComponent(message)}${chatSessionId ? '&sessionId=' + chatSessionId : ''}`;
+                const response = await fetch(url);
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+
+                let assistantText = '';
+                assistantDiv.innerHTML = '<strong>Advisor:</strong> ';
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    const chunk = decoder.decode(value, { stream: true });
+                    for (const line of chunk.split('\n')) {
+                        if (line.startsWith('data: ')) {
+                            const data = line.slice(6).replace(/\\n/g, '\n');
+                            assistantText += data;
+                            assistantDiv.innerHTML = '<strong>Advisor:</strong> ' + esc(assistantText).replace(/\n/g, '<br>');
+                            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+                        } else if (line.startsWith('event: done')) {
+                            // Next data line has the session ID
+                        } else if (line.startsWith('data: ') && !chatSessionId) {
+                            // Session ID from done event
+                        }
+                    }
+
+                    // Extract session ID from done event
+                    if (chunk.includes('event: done')) {
+                        const match = chunk.match(/event: done\ndata: (\w+)/);
+                        if (match) chatSessionId = match[1];
+                    }
+                }
+            } catch (err) {
+                assistantDiv.innerHTML = `<strong>Advisor:</strong> <span style="color:#c62828;">Error: ${err.message}</span>`;
+            }
+        }
 
         (async function loadSources() {
             try {

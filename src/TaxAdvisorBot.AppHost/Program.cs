@@ -18,6 +18,9 @@ var web = builder.AddCSharpApp("web", "../platforms/TaxAdvisorBot.Web/TaxAdvisor
     .WithExternalHttpEndpoints()
     .WithReference(redis)
     .WithReference(qdrant)
-    .WithReference(mongoDB);
+    .WithReference(mongoDB)
+    .WaitFor(redis)
+    .WaitFor(qdrant)
+    .WaitFor(mongo);
 
 builder.Build().Run();
