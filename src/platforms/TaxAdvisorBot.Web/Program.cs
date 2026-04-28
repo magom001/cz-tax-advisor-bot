@@ -5,12 +5,18 @@ using TaxAdvisorBot.Application.Interfaces;
 using TaxAdvisorBot.Application.Options;
 using TaxAdvisorBot.Infrastructure;
 using TaxAdvisorBot.Infrastructure.Search;
+using TaxAdvisorBot.Web.Hubs;
+using TaxAdvisorBot.Web.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.AddServiceDefaults();
 builder.AddApplicationOptions();
 builder.AddInfrastructureServices();
+
+// SignalR for real-time chat
+builder.Services.AddSignalR();
+builder.Services.AddSingleton<INotificationService, SignalRNotificationService>();
 
 var app = builder.Build();
 
@@ -20,7 +26,43 @@ var ingestionJobs = new ConcurrentDictionary<string, IngestionJob>();
 app.MapDefaultEndpoints();
 app.UseStaticFiles();
 
-// Chat API — streaming tax advisor
+// SignalR hub
+app.MapHub<ChatHub>("/hubs/chat");
+
+// File upload
+app.MapPost("/api/documents/upload", async (IFormFile file, IJobQueue jobQueue, CancellationToken ct) =>
+{
+    const long maxSize = 10 * 1024 * 1024; // 10 MB
+    var allowedTypes = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    {
+        "application/pdf", "image/png", "image/jpeg",
+        "text/csv", "application/vnd.ms-excel",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    };
+
+    if (file.Length == 0)
+        return Results.BadRequest(new { error = "Empty file" });
+
+    if (file.Length > maxSize)
+        return Results.BadRequest(new { error = $"File too large. Maximum {maxSize / 1024 / 1024} MB." });
+
+    if (!allowedTypes.Contains(file.ContentType))
+        return Results.BadRequest(new { error = $"Unsupported file type: {file.ContentType}" });
+
+    // Read file into memory and enqueue for processing
+    using var ms = new MemoryStream();
+    await file.CopyToAsync(ms, ct);
+
+    await jobQueue.EnqueueAsync(new DocumentUploadJob(
+        FileName: file.FileName,
+        ContentType: file.ContentType,
+        Data: ms.ToArray()
+    ), ct);
+
+    return Results.Accepted(value: new { fileName = file.FileName, size = file.Length, status = "queued" });
+}).DisableAntiforgery();
+
+// Chat API — streaming tax advisor (SSE fallback for non-SignalR clients)
 app.MapGet("/api/chat", async (string message, string? sessionId, IConversationService chat, HttpContext ctx, CancellationToken ct) =>
 {
     var sid = sessionId ?? Guid.NewGuid().ToString("N")[..8];
@@ -131,6 +173,7 @@ app.Run();
 record IngestRequest(string Url, int Year);
 record BatchIngestRequest(int Year);
 record UniformRateRequest(int Year, string CurrencyCode, decimal Rate);
+record DocumentUploadJob(string FileName, string ContentType, byte[] Data);
 
 class IngestionJob(string url)
 {

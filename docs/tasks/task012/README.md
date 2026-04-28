@@ -1,33 +1,30 @@
-# Task 012 — Document Extraction Service (Azure AI Document Intelligence)
+# Task 012 — User Document Extraction (LLM-based)
 
 ## Objective
 
-Implement the document extraction service that uses Azure AI Document Intelligence to extract structured data from uploaded tax documents (invoices, tax forms, bank statements).
+When the user **uploads their personal tax documents** (Fidelity brokerage statement, employment confirmation, pension fund statement, etc.), extract the relevant numbers and populate the `TaxReturn` model automatically.
+
+This is NOT about RAG/Qdrant (that's legal text for the knowledge base). This is about the user's own documents — "here's my Fidelity PDF, fill in my tax return."
 
 ## Work Items
 
-1. Add NuGet package: `Azure.AI.FormRecognizer`.
-2. Implement `AzureDocumentExtractionService : IDocumentExtractionService`:
-   - Accept file stream + content type.
-   - Call Azure Document Intelligence (Layout or prebuilt model).
-   - Map extracted fields to `TaxDocumentContext` model.
-   - Return structured data with confidence scores.
-3. Create `DocumentExtractionJob` for async processing via `IJobQueue`:
-   - Enqueue when file is uploaded.
-   - Process in background.
-   - Notify client via `INotificationService` when complete.
-4. Add `DocumentIntelligenceOptions` registration.
-5. Write unit tests:
-   - Verify field mapping from AI response to `TaxDocumentContext`.
-   - Verify low-confidence fields are flagged for human review.
-6. Write integration test (requires Azure AI Document Intelligence):
-   - Process a sample invoice PDF.
-   - Verify extracted amounts match expected values.
+1. Create `DocumentExtractionJobHandler : IJobHandler<DocumentUploadJob>`:
+   - Receives uploaded file from the job queue (enqueued by `/api/documents/upload`).
+   - Uses `ContentExtractor` to get text from PDF/image/spreadsheet.
+   - Sends extracted text to gpt-4.1-mini with a structured extraction prompt.
+   - Parses LLM response into `StockTransaction[]` or `TaxReturn` field updates.
+   - Saves to `ITaxReturnRepository`.
+   - Notifies client via `INotificationService`.
+2. Extraction prompts per document type:
+   - **Brokerage statement** → RSU vests, ESPP purchases, dividends, tax withheld (dates, amounts, prices)
+   - **Employment confirmation** (Potvrzení) → §6 gross income, social/health insurance, tax advances
+   - **Pension/insurance statement** → §15 deduction amounts
+   - **Mortgage interest confirmation** → §15 mortgage interest
+3. Flag low-confidence extractions for user confirmation via the chat.
+4. Write unit tests with sample document text.
 
 ## Expected Results
 
-- Uploaded documents are processed asynchronously.
-- Extracted data populates the `TaxDocumentContext` with correct field values.
-- Low-confidence extractions are flagged, not silently accepted.
-- Progress updates are sent to the client during processing.
-- Unit tests pass without Azure (mocked API responses).
+- User drops a Fidelity PDF → system extracts all stock transactions.
+- User drops "Potvrzení o zdanitelných příjmech" → §6 fields auto-populated.
+- User is asked to confirm any ambiguous extractions.

@@ -2,27 +2,24 @@
 
 ## Objective
 
-Build a comprehensive integration test suite with "golden case" tax scenarios that verify end-to-end correctness of the tax calculation pipeline.
+Build comprehensive integration tests that verify end-to-end correctness of the tax calculation pipeline. These test the plugins directly — not the agents (agent behavior is non-deterministic).
 
 ## Work Items
 
 1. Define golden-case scenarios in `tests/TaxAdvisorBot.Integration.Tests`:
-   - **Scenario A**: §6 employment income only — basic salary with social/health insurance.
-   - **Scenario B**: §10 RSU income — US stock vesting, conversion via ČNB rate, tax calculation.
-   - **Scenario C**: §8 capital gains — stock sale with acquisition cost deduction.
-   - **Scenario D**: Combined §6 + §10 — employment + foreign dividends, tax credit method (§38f).
-   - **Scenario E**: Missing information — verify the system identifies gaps and asks for them.
-2. Each scenario provides:
-   - Input: structured `TaxReturn` with known values.
-   - Expected output: exact tax amount, applicable sections, required citations.
-3. Test the full pipeline: input → plugin calculations → validation → output.
-4. Test exchange rate conversion with known historical rates.
-5. Mark tests that require Docker/Azure with `[Trait("Category", "Integration")]`.
+   - **Scenario A**: §6 employment income only — salary + insurance, basic taxpayer credit.
+   - **Scenario B**: §10 RSU income — US stock vesting, ČNB rate conversion, 15% tax.
+   - **Scenario C**: Share sale with 3-year exemption — verify `IsExemptFromTax`.
+   - **Scenario D**: Combined §6 + §10 + §15 deductions + §35ba credits — full pipeline.
+   - **Scenario E**: Solidarity surcharge — income above threshold, 23% rate on excess.
+   - **Scenario F**: Child tax bonus — credits exceed tax, negative result (refund).
+   - **Scenario G**: Missing information — `TaxValidationPlugin.GetMissingFields` identifies gaps.
+2. Each scenario: known input `TaxReturn` → call plugin methods → assert exact CZK amounts.
+3. Test exchange rate conversion with known historical rates (mocked ČNB response).
+4. Test ESPP discount calculation (10% discount, §6 income).
 
 ## Expected Results
 
-- All golden-case scenarios produce expected tax amounts (to the CZK).
-- Missing-field detection correctly identifies gaps in each scenario.
-- Citations reference the correct § for each calculation.
-- Tests are runnable in CI with Docker (Qdrant) and Azure AI credentials.
-- Any regression in tax calculation logic is immediately caught.
+- All scenarios produce expected tax amounts (to the CZK).
+- Regressions in plugin math are caught immediately.
+- No Azure/Docker dependencies — pure unit tests on plugins.

@@ -11,6 +11,7 @@ using TaxAdvisorBot.Application.Interfaces;
 using TaxAdvisorBot.Application.Options;
 using TaxAdvisorBot.Infrastructure.AI;
 using TaxAdvisorBot.Infrastructure.ExchangeRates;
+using TaxAdvisorBot.Infrastructure.Messaging;
 using TaxAdvisorBot.Infrastructure.Persistence;
 using TaxAdvisorBot.Infrastructure.Search;
 
@@ -98,7 +99,8 @@ public static class DependencyInjection
         builder.Services.AddSingleton<TextSearchProvider>(sp =>
         {
             var searchService = sp.GetRequiredService<ILegalSearchService>();
-            var textSearch = new LegalTextSearchAdapter(searchService);
+            var logger = sp.GetRequiredService<ILogger<LegalTextSearchAdapter>>();
+            var textSearch = new LegalTextSearchAdapter(searchService, logger);
 
             return new TextSearchProvider(textSearch, options: new TextSearchProviderOptions
             {
@@ -118,6 +120,11 @@ public static class DependencyInjection
 
         // Batch legal ingestion (all sources via Azure OpenAI Batch API)
         builder.Services.AddHttpClient<BatchLegalIngestionService>();
+
+        // Async job queue + processor
+        builder.Services.AddSingleton<InMemoryJobQueue>();
+        builder.Services.AddSingleton<IJobQueue>(sp => sp.GetRequiredService<InMemoryJobQueue>());
+        builder.Services.AddHostedService<JobProcessorService>();
 
         return builder;
     }

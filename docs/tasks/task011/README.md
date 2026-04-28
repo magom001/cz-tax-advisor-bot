@@ -1,35 +1,23 @@
-# Task 011 — Legal Text Ingestion Tool
+# Task 011 — WhiteboardProvider & Agent Memory
+
+## Status: Replaces original task (ingestion tool already built as LegalIngestionService)
 
 ## Objective
 
-Build the offline CLI tool that ingests Czech tax legislation, chunks it by § boundaries, generates embeddings, and stores them in Qdrant.
+Add short-term conversation memory via `WhiteboardProvider` and long-term persistence via MongoDB. The Whiteboard retains key facts (income amounts, deductions claimed, children count) even when chat history is truncated.
 
 ## Work Items
 
-1. Create `src/tools/TaxAdvisorBot.Ingestion` console project.
-2. Implement `ChunkingStrategy`:
-   - Parse legal text (Markdown/plain text input).
-   - Split by `§` paragraph boundaries.
-   - Prepend section title to each chunk for context.
-   - Generate metadata: `paragraph_id`, `sub_paragraph`, `effective_year`, `source_url`, `document_type`.
-3. Implement `LegalTextIngestionPipeline`:
-   - Read source files from a directory.
-   - Apply chunking strategy.
-   - Generate embeddings via `EmbeddingService`.
-   - Upsert chunks + metadata into Qdrant.
-4. Accept CLI arguments: input directory, target collection, effective year.
-5. Write unit tests:
-   - Chunking correctly splits sample legal text by §.
-   - Metadata is correctly extracted from chunk headers.
-   - Context injection (section title prepending) works.
-6. Write integration test:
-   - Ingest a small sample legal text file into Qdrant.
-   - Verify chunks are retrievable via `ILegalSearchService`.
+1. Add `WhiteboardProvider` to the agent thread in the orchestration service.
+2. Configure `WhiteboardProviderOptions`:
+   - `MaxWhiteboardMessages`: 20 (retain most important facts)
+   - Custom `ContextPrompt`: "The following facts have been established about the user's tax situation..."
+3. Ensure Whiteboard state is populated from `IConversationRepository` on session resume.
+4. Test that key facts survive across multiple turns even with history truncation.
+5. Evaluate `Mem0Provider` for cross-session memory (user preferences, past filings) — implement if Mem0 service is available, otherwise defer.
 
 ## Expected Results
 
-- `dotnet run --project src/tools/TaxAdvisorBot.Ingestion -- --input ./data --collection czech-tax-2025 --year 2025` ingests legal texts.
-- Chunks respect § boundaries — no paragraph is split mid-sentence.
-- Each chunk has complete metadata for filtering.
-- Unit tests pass without Qdrant (chunking logic only).
-- Integration test passes with Qdrant (Docker required).
+- User says "My income is 1.5M CZK, I have 2 children and a mortgage" → Whiteboard retains all 3 facts.
+- 20 turns later, agent still knows the income, children, and mortgage without re-asking.
+- Session resume from MongoDB restores the conversation context.

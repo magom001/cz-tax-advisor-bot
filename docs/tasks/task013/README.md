@@ -2,35 +2,28 @@
 
 ## Objective
 
-Build the Telegram Bot platform as a thin shell that uses the same core services as Web and CLI.
+Build the Telegram Bot platform as a thin shell using the same `IConversationService` and agent orchestration as Web and CLI.
 
 ## Work Items
 
 1. Create `src/platforms/TaxAdvisorBot.Telegram` project.
 2. Add NuGet package: `Telegram.Bot`.
-3. Configure `Program.cs` with `Host.CreateDefaultBuilder`:
-   - Register core services via `AddInfrastructureServices()`.
-   - Register Telegram Bot client.
-   - Configure `user-secrets` for bot token + Azure AI keys.
+3. Configure `Program.cs` with `Host.CreateApplicationBuilder`:
+   - Register core services via `AddApplicationOptions()` + `AddInfrastructureServices()`.
+   - Register Telegram Bot client via `user-secrets` (bot token).
 4. Implement `MessageHandler`:
-   - Receive text messages → send to `IConversationService`.
-   - Stream response back as Telegram message (edit message for incremental updates).
-   - Send `sendChatAction("typing")` during processing.
+   - Receive text messages → `IConversationService.ChatAsync()`.
+   - Stream response as Telegram message with incremental edits.
+   - `sendChatAction("typing")` during processing.
 5. Implement `DocumentHandler`:
-   - Receive document uploads from Telegram.
-   - Enqueue extraction job.
-   - Notify user when processing is complete.
-6. Implement `TelegramNotificationService : INotificationService`:
-   - Maps progress updates to Telegram message edits.
+   - Receive document uploads → enqueue `DocumentUploadJob`.
+   - Notify when extraction completes.
+6. Implement `TelegramNotificationService : INotificationService`.
 7. Register in AppHost.
-8. Write unit tests:
-   - Verify message handler invokes `IConversationService`.
-   - Verify document handler enqueues extraction job.
-   - Verify notification service formats messages correctly.
+8. Write unit tests with mocked Telegram API.
 
 ## Expected Results
 
-- Telegram bot responds to messages with AI-generated tax advice.
-- Documents sent to the bot are processed and extracted.
-- Typing indicators appear during processing.
-- Unit tests pass with mocked Telegram API.
+- Telegram bot responds with AI-generated tax advice using the same agent orchestration.
+- Documents sent to bot are extracted and processed.
+- Typing indicators during processing. Unit tests pass.

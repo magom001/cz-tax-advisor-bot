@@ -113,10 +113,19 @@
             <div id="chatMessages" style="max-height:400px; overflow-y:auto; border:1px solid #e0e0e0; border-radius:4px; padding:12px; margin-bottom:8px; min-height:100px; background:#fafafa;">
                 <div style="color:#999; text-align:center;">Ask a tax question...</div>
             </div>
-            <div style="display:flex; gap:8px;">
-                <input type="text" id="chatInput" placeholder="e.g. How do I tax my RSU income?" style="flex:1; padding:10px; font-size:15px; border:2px solid #ddd; border-radius:8px;">
+            <div style="display:flex; gap:8px; margin-bottom:8px;">
+                <input type="text" id="chatInput" placeholder="e.g. How do I tax my RSU income?" style="flex:1; padding:10px; font-size:15px; border:2px solid #ddd; border-radius:8px;" autofocus>
                 <button onclick="sendChat()" style="padding:10px 20px; font-size:15px; background:#0066cc; color:white; border:none; border-radius:8px; cursor:pointer;">Send</button>
             </div>
+            <div id="dropZone" style="border:2px dashed #ccc; border-radius:8px; padding:12px; text-align:center; color:#999; font-size:13px; cursor:pointer;"
+                 ondragover="event.preventDefault(); this.style.borderColor='#0066cc'; this.style.background='#f0f8ff';"
+                 ondragleave="this.style.borderColor='#ccc'; this.style.background='transparent';"
+                 ondrop="handleDrop(event)"
+                 onclick="document.getElementById('fileInput').click()">
+                Drop files here or click to upload (PDF, images, spreadsheets — max 10 MB)
+                <input type="file" id="fileInput" style="display:none" accept=".pdf,.png,.jpg,.jpeg,.csv,.xls,.xlsx" onchange="uploadFile(this.files[0])">
+            </div>
+            <div id="uploadStatus" style="font-size:12px; margin-top:4px;"></div>
         </div>
 
         <div class="search-box">
@@ -198,6 +207,38 @@
                 }
             } catch (err) {
                 assistantDiv.innerHTML = `<strong>Advisor:</strong> <span style="color:#c62828;">Error: ${err.message}</span>`;
+            }
+        }
+
+        function handleDrop(event) {
+            event.preventDefault();
+            event.target.style.borderColor = '#ccc';
+            event.target.style.background = 'transparent';
+            const file = event.dataTransfer.files[0];
+            if (file) uploadFile(file);
+        }
+
+        async function uploadFile(file) {
+            if (!file) return;
+            const statusEl = document.getElementById('uploadStatus');
+            statusEl.style.color = '#1565c0';
+            statusEl.textContent = `Uploading ${file.name}...`;
+
+            try {
+                const formData = new FormData();
+                formData.append('file', file);
+
+                const res = await fetch('/api/documents/upload', { method: 'POST', body: formData });
+                if (!res.ok) {
+                    const err = await res.json();
+                    throw new Error(err.error || `HTTP ${res.status}`);
+                }
+                const data = await res.json();
+                statusEl.style.color = '#2e7d32';
+                statusEl.textContent = `${data.fileName} uploaded (${(data.size/1024).toFixed(1)} KB) — queued for processing.`;
+            } catch (err) {
+                statusEl.style.color = '#c62828';
+                statusEl.textContent = `Upload failed: ${err.message}`;
             }
         }
 
