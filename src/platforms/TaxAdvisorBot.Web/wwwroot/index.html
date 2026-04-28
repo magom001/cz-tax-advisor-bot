@@ -122,8 +122,8 @@
                  ondragleave="this.style.borderColor='#ccc'; this.style.background='transparent';"
                  ondrop="handleDrop(event)"
                  onclick="document.getElementById('fileInput').click()">
-                Drop files here or click to upload (PDF, images, spreadsheets — max 10 MB)
-                <input type="file" id="fileInput" style="display:none" accept=".pdf,.png,.jpg,.jpeg,.csv,.xls,.xlsx" onchange="uploadFile(this.files[0])">
+                Drop files here or click to upload (PDF, images, spreadsheets — multiple files OK)
+                <input type="file" id="fileInput" style="display:none" accept=".pdf,.png,.jpg,.jpeg,.csv,.xls,.xlsx" multiple onchange="uploadFiles(this.files)">
             </div>
             <div id="uploadStatus" style="font-size:12px; margin-top:4px;"></div>
         </div>
@@ -214,19 +214,20 @@
             event.preventDefault();
             event.target.style.borderColor = '#ccc';
             event.target.style.background = 'transparent';
-            const file = event.dataTransfer.files[0];
-            if (file) uploadFile(file);
+            if (event.dataTransfer.files.length > 0) uploadFiles(event.dataTransfer.files);
         }
 
-        async function uploadFile(file) {
-            if (!file) return;
+        async function uploadFiles(fileList) {
+            if (!fileList || fileList.length === 0) return;
             const statusEl = document.getElementById('uploadStatus');
             statusEl.style.color = '#1565c0';
-            statusEl.textContent = `Uploading ${file.name}...`;
+            statusEl.textContent = `Uploading ${fileList.length} file(s)...`;
 
             try {
                 const formData = new FormData();
-                formData.append('file', file);
+                for (const file of fileList) {
+                    formData.append('file', file);
+                }
 
                 const res = await fetch('/api/documents/upload', { method: 'POST', body: formData });
                 if (!res.ok) {
@@ -234,8 +235,13 @@
                     throw new Error(err.error || `HTTP ${res.status}`);
                 }
                 const data = await res.json();
-                statusEl.style.color = '#2e7d32';
-                statusEl.textContent = `${data.fileName} uploaded (${(data.size/1024).toFixed(1)} KB) — queued for processing.`;
+                const msgs = [];
+                if (data.uploaded.length > 0)
+                    msgs.push(`${data.uploaded.length} file(s) queued`);
+                if (data.errors.length > 0)
+                    msgs.push(`${data.errors.length} failed: ${data.errors.map(e => e.error).join(', ')}`);
+                statusEl.style.color = data.errors.length > 0 ? '#e65100' : '#2e7d32';
+                statusEl.textContent = msgs.join(' | ');
             } catch (err) {
                 statusEl.style.color = '#c62828';
                 statusEl.textContent = `Upload failed: ${err.message}`;

@@ -6,6 +6,7 @@ using Microsoft.SemanticKernel.Agents;
 using Microsoft.SemanticKernel.ChatCompletion;
 using Microsoft.SemanticKernel.Connectors.OpenAI;
 using Microsoft.SemanticKernel.Data;
+using Microsoft.SemanticKernel.Memory;
 using TaxAdvisorBot.Application.Interfaces;
 using TaxAdvisorBot.Application.Options;
 using TaxAdvisorBot.Domain.Models;
@@ -13,6 +14,7 @@ using TaxAdvisorBot.Domain.Models;
 #pragma warning disable SKEXP0001  // Agent API is experimental
 #pragma warning disable SKEXP0010  // Embedding API is experimental
 #pragma warning disable SKEXP0110  // AIContextProviders is experimental
+#pragma warning disable SKEXP0120  // WhiteboardProvider is experimental
 #pragma warning disable SKEXP0130  // TextSearchProvider is experimental
 
 namespace TaxAdvisorBot.Infrastructure.AI;
@@ -63,18 +65,21 @@ public sealed class TaxAdvisorAgentService : IConversationService
         """;
 
     private readonly Kernel _kernel;
-    private readonly TextSearchProvider? _ragProvider;
+    private readonly TextSearchProvider _ragProvider;
+    private readonly WhiteboardProvider _whiteboardProvider;
     private readonly IConversationRepository _conversationRepo;
     private readonly ILogger<TaxAdvisorAgentService> _logger;
 
     public TaxAdvisorAgentService(
         Kernel kernel,
+        TextSearchProvider ragProvider,
+        WhiteboardProvider whiteboardProvider,
         IConversationRepository conversationRepo,
-        ILogger<TaxAdvisorAgentService> logger,
-        TextSearchProvider? ragProvider = null)
+        ILogger<TaxAdvisorAgentService> logger)
     {
         _kernel = kernel;
         _ragProvider = ragProvider;
+        _whiteboardProvider = whiteboardProvider;
         _conversationRepo = conversationRepo;
         _logger = logger;
     }
@@ -116,11 +121,9 @@ public sealed class TaxAdvisorAgentService : IConversationService
 
         var agentThread = new ChatHistoryAgentThread(chatHistory);
 
-        // Attach RAG provider if available
-        if (_ragProvider is not null)
-        {
-            agentThread.AIContextProviders.Add(_ragProvider);
-        }
+        // Attach AI context providers
+        agentThread.AIContextProviders.Add(_ragProvider);
+        agentThread.AIContextProviders.Add(_whiteboardProvider);
 
         // Save user message
         await _conversationRepo.AddMessageAsync(sessionId, "user", message, cancellationToken);

@@ -3,8 +3,10 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Microsoft.SemanticKernel;
+using Microsoft.SemanticKernel.ChatCompletion;
 using Microsoft.SemanticKernel.Connectors.Qdrant;
 using Microsoft.SemanticKernel.Data;
+using Microsoft.SemanticKernel.Memory;
 using MongoDB.Driver;
 using Qdrant.Client;
 using TaxAdvisorBot.Application.Interfaces;
@@ -18,6 +20,7 @@ using TaxAdvisorBot.Infrastructure.Search;
 #pragma warning disable SKEXP0001 // TextSearchProvider is experimental
 #pragma warning disable SKEXP0010 // Embedding API is experimental
 #pragma warning disable SKEXP0020 // Qdrant vector store connector is experimental
+#pragma warning disable SKEXP0120 // WhiteboardProvider is experimental
 #pragma warning disable SKEXP0130 // TextSearchProvider is experimental
 
 namespace TaxAdvisorBot.Infrastructure;
@@ -109,7 +112,20 @@ public static class DependencyInjection
             });
         });
 
-        // Tax advisor agent (ChatCompletionAgent with RAG + plugins)
+        // WhiteboardProvider for short-term conversation memory
+        builder.Services.AddSingleton<WhiteboardProvider>(sp =>
+        {
+            var kernel = sp.GetRequiredService<Kernel>();
+            var chatClient = kernel.GetRequiredService<IChatCompletionService>() as Microsoft.Extensions.AI.IChatClient
+                ?? throw new InvalidOperationException("IChatCompletionService does not implement IChatClient");
+            return new WhiteboardProvider(chatClient, options: new WhiteboardProviderOptions
+            {
+                MaxWhiteboardMessages = 20,
+                ContextPrompt = "The following key facts have been established about the user's tax situation. Use them to avoid re-asking the user for information already provided:",
+            });
+        });
+
+        // Tax advisor agent (ChatCompletionAgent with RAG + Whiteboard + plugins)
         builder.Services.AddSingleton<IConversationService, TaxAdvisorAgentService>();
 
         // Content extraction pipeline (HTML → strip tags, PDF → PdfPig, plain text → passthrough)

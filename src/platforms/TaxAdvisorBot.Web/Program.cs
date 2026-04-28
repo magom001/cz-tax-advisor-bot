@@ -29,10 +29,10 @@ app.UseStaticFiles();
 // SignalR hub
 app.MapHub<ChatHub>("/hubs/chat");
 
-// File upload
-app.MapPost("/api/documents/upload", async (IFormFile file, IJobQueue jobQueue, CancellationToken ct) =>
+// File upload (supports multiple files)
+app.MapPost("/api/documents/upload", async (HttpRequest request, IJobQueue jobQueue, CancellationToken ct) =>
 {
-    const long maxSize = 10 * 1024 * 1024; // 10 MB
+    const long maxSizePerFile = 50 * 1024 * 1024; // 50 MB per file
     var allowedTypes = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
     {
         "application/pdf", "image/png", "image/jpeg",
@@ -40,26 +40,44 @@ app.MapPost("/api/documents/upload", async (IFormFile file, IJobQueue jobQueue, 
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     };
 
-    if (file.Length == 0)
-        return Results.BadRequest(new { error = "Empty file" });
+    var form = await request.ReadFormAsync(ct);
+    if (form.Files.Count == 0)
+        return Results.BadRequest(new { error = "No files provided" });
 
-    if (file.Length > maxSize)
-        return Results.BadRequest(new { error = $"File too large. Maximum {maxSize / 1024 / 1024} MB." });
+    var results = new List<object>();
+    var errors = new List<object>();
 
-    if (!allowedTypes.Contains(file.ContentType))
-        return Results.BadRequest(new { error = $"Unsupported file type: {file.ContentType}" });
+    foreach (var file in form.Files)
+    {
+        if (file.Length == 0)
+        {
+            errors.Add(new { fileName = file.FileName, error = "Empty file" });
+            continue;
+        }
+        if (file.Length > maxSizePerFile)
+        {
+            errors.Add(new { fileName = file.FileName, error = $"Too large ({file.Length / 1024 / 1024} MB). Max {maxSizePerFile / 1024 / 1024} MB." });
+            continue;
+        }
+        if (!allowedTypes.Contains(file.ContentType))
+        {
+            errors.Add(new { fileName = file.FileName, error = $"Unsupported type: {file.ContentType}" });
+            continue;
+        }
 
-    // Read file into memory and enqueue for processing
-    using var ms = new MemoryStream();
-    await file.CopyToAsync(ms, ct);
+        using var ms = new MemoryStream();
+        await file.CopyToAsync(ms, ct);
 
-    await jobQueue.EnqueueAsync(new DocumentUploadJob(
-        FileName: file.FileName,
-        ContentType: file.ContentType,
-        Data: ms.ToArray()
-    ), ct);
+        await jobQueue.EnqueueAsync(new DocumentUploadJob(
+            FileName: file.FileName,
+            ContentType: file.ContentType,
+            Data: ms.ToArray()
+        ), ct);
 
-    return Results.Accepted(value: new { fileName = file.FileName, size = file.Length, status = "queued" });
+        results.Add(new { fileName = file.FileName, size = file.Length, status = "queued" });
+    }
+
+    return Results.Accepted(value: new { uploaded = results, errors });
 }).DisableAntiforgery();
 
 // Chat API — streaming tax advisor (SSE fallback for non-SignalR clients)
