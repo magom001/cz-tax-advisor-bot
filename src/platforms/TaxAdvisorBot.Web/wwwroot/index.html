@@ -78,6 +78,35 @@
             </ul>
         </div>
 
+        <!-- Uniform Rates Section -->
+        <div class="ingest-section" style="background:#e8f4fd; border-color:#90caf9;">
+            <div class="ingest-header">
+                <div>
+                    <h3>§38 Uniform Exchange Rates</h3>
+                    <p style="font-size:13px; color:#1565c0;">Yearly rates for tax calculations. No API — manually configured.</p>
+                </div>
+            </div>
+            <table id="ratesTable" style="width:100%; border-collapse:collapse; margin-bottom:8px;">
+                <thead>
+                    <tr style="text-align:left; border-bottom:2px solid #90caf9;">
+                        <th style="padding:6px;">Year</th>
+                        <th style="padding:6px;">Currency</th>
+                        <th style="padding:6px;">Rate (CZK)</th>
+                        <th style="padding:6px; width:60px;"></th>
+                    </tr>
+                </thead>
+                <tbody id="ratesBody">
+                    <tr><td colspan="4" style="padding:12px; text-align:center; color:#999;">Loading...</td></tr>
+                </tbody>
+            </table>
+            <div style="display:flex; gap:8px; align-items:center;">
+                <input type="number" id="rateYear" placeholder="Year" value="2025" min="2020" max="2030" style="width:80px; padding:6px; border:1px solid #90caf9; border-radius:4px;">
+                <input type="text" id="rateCurrency" placeholder="USD" value="USD" style="width:60px; padding:6px; border:1px solid #90caf9; border-radius:4px; text-transform:uppercase;">
+                <input type="number" id="rateValue" placeholder="23.48" step="0.01" style="width:100px; padding:6px; border:1px solid #90caf9; border-radius:4px;">
+                <button class="sm green" onclick="addRate()" style="padding:6px 16px;">Add / Update</button>
+            </div>
+        </div>
+
         <div class="search-box">
             <input type="text" id="query" placeholder="Search Czech tax law... (e.g. 'RSU vesting tax' or '§ 10')" autofocus>
             <input type="number" id="year" value="2025" min="2020" max="2030" title="Tax year">
@@ -107,6 +136,67 @@
                     `<li style="color:#c62828; padding:12px;">Failed to load sources: ${err.message}</li>`;
             }
         })();
+
+        // Load uniform rates on page load
+        loadRates();
+
+        async function loadRates() {
+            try {
+                const res = await fetch('/api/rates');
+                const rates = await res.json();
+                const body = document.getElementById('ratesBody');
+
+                if (rates.length === 0) {
+                    body.innerHTML = '<tr><td colspan="4" style="padding:12px; text-align:center; color:#999;">No rates configured</td></tr>';
+                    return;
+                }
+
+                body.innerHTML = rates.map(r => `
+                    <tr style="border-bottom:1px solid #e0e0e0;">
+                        <td style="padding:6px;">${r.year}</td>
+                        <td style="padding:6px;">${esc(r.currencyCode)}</td>
+                        <td style="padding:6px; font-weight:600;">${r.rate.toFixed(3)}</td>
+                        <td style="padding:6px;">
+                            <button class="sm green" onclick="editRate(${r.year},'${esc(r.currencyCode)}',${r.rate})" style="padding:2px 8px; font-size:11px; background:#1565c0;">Edit</button>
+                        </td>
+                    </tr>
+                `).join('');
+            } catch (err) {
+                document.getElementById('ratesBody').innerHTML =
+                    `<tr><td colspan="4" style="color:#c62828; padding:12px;">${err.message}</td></tr>`;
+            }
+        }
+
+        function editRate(year, currency, rate) {
+            document.getElementById('rateYear').value = year;
+            document.getElementById('rateCurrency').value = currency;
+            document.getElementById('rateValue').value = rate;
+            document.getElementById('rateValue').focus();
+        }
+
+        async function addRate() {
+            const year = parseInt(document.getElementById('rateYear').value);
+            const currencyCode = document.getElementById('rateCurrency').value.trim().toUpperCase();
+            const rate = parseFloat(document.getElementById('rateValue').value);
+
+            if (!year || !currencyCode || isNaN(rate)) {
+                alert('Please fill in all fields');
+                return;
+            }
+
+            try {
+                const res = await fetch('/api/rates', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ year, currencyCode, rate })
+                });
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                document.getElementById('rateValue').value = '';
+                await loadRates();
+            } catch (err) {
+                alert(`Failed to save rate: ${err.message}`);
+            }
+        }
 
         function renderSources() {
             const list = document.getElementById('sourceList');

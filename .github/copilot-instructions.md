@@ -35,6 +35,35 @@
 - **Never let the LLM do math.** All calculations happen in deterministic C# plugins.
 - Every AI response must include citations (`LegalReference` with § number and source URL).
 
+### Semantic Kernel Documentation
+
+When implementing agent features, refer to these official docs:
+
+- **Agents overview**: https://learn.microsoft.com/en-us/semantic-kernel/frameworks/agent/agent-architecture
+- **RAG (TextSearchProvider)**: https://learn.microsoft.com/en-us/semantic-kernel/frameworks/agent/agent-rag?pivots=programming-language-csharp
+- **Memory (Mem0 + Whiteboard)**: https://learn.microsoft.com/en-us/semantic-kernel/frameworks/agent/agent-memory?pivots=programming-language-csharp
+- **Agent orchestration (Sequential, Handoff, Concurrent, Group Chat)**: https://learn.microsoft.com/en-us/semantic-kernel/frameworks/agent/agent-orchestration/?pivots=programming-language-csharp
+- **Text search concepts**: https://learn.microsoft.com/en-us/semantic-kernel/concepts/text-search/
+- **Samples repo**: https://github.com/microsoft/semantic-kernel/tree/main/dotnet/samples/Concepts/Agents
+
+### Agent Architecture (target)
+
+Use **Handoff orchestration** with specialized agents:
+- **Legal Auditor** (gpt-4.1) — RAG search + Czech law interpretation. Uses `TextSearchProvider` with Qdrant.
+- **Calculator** (plugins only) — Deterministic C# tax math via `TaxCalculationPlugin` and `ExchangeRatePlugin`.
+- **Verifier** (o4-mini) — Cross-references calculation results against retrieved legal text.
+- **Interviewer** (gpt-4.1-mini) — Conversational Q&A, asks user for missing information via `TaxValidationPlugin`.
+
+Use `WhiteboardProvider` for short-term conversation memory (retains key facts across long sessions).
+Use `IConversationRepository` (MongoDB) for persistent conversation history.
+
+### Experimental Packages
+
+```
+dotnet add package Microsoft.SemanticKernel.Agents.Orchestration --prerelease
+dotnet add package Microsoft.SemanticKernel.Agents.Runtime.InProcess --prerelease
+```
+
 ## Secrets & Configuration
 
 - **Local development**: `dotnet user-secrets` per platform project. Never commit secrets.
@@ -84,3 +113,68 @@
 - Namespace matches folder structure.
 - Use `Microsoft.Extensions.Logging.ILogger<T>` for logging — no static loggers.
 - Structured logging with correlation IDs per conversation session.
+
+
+## Semantic Kernel documentation
+
+An Overview of the Agent Architecture: https://learn.microsoft.com/en-us/semantic-kernel/frameworks/agent/agent-architecture?pivots=programming-language-csharp
+
+The Semantic Kernel Common Agent API Surface: https://learn.microsoft.com/en-us/semantic-kernel/frameworks/agent/agent-api?pivots=programming-language-csharp
+
+Configuring Agents with Semantic Kernel Plugins: https://learn.microsoft.com/en-us/semantic-kernel/frameworks/agent/agent-functions?pivots=programming-language-csharp
+
+Contextual Function Selection with Agents: https://learn.microsoft.com/en-us/semantic-kernel/frameworks/agent/agent-contextual-function-selection?pivots=programming-language-csharp
+
+Create an Agent from a Semantic Kernel Template: https://learn.microsoft.com/en-us/semantic-kernel/frameworks/agent/agent-templates?pivots=programming-language-csharp
+
+How to Stream Agent Responses: https://learn.microsoft.com/en-us/semantic-kernel/frameworks/agent/agent-streaming?pivots=programming-language-csharp
+
+Using memory with Agents: https://learn.microsoft.com/en-us/semantic-kernel/frameworks/agent/agent-memory?pivots=programming-language-csharp
+
+Adding Retrieval Augmented Generation (RAG) to Semantic Kernel Agents: https://learn.microsoft.com/en-us/semantic-kernel/frameworks/agent/agent-rag?pivots=programming-language-csharp
+
+Exploring the Semantic Kernel AzureAIAgent: https://learn.microsoft.com/en-us/semantic-kernel/frameworks/agent/agent-types/azure-ai-agent?pivots=programming-language-csharp
+
+Exploring the Semantic Kernel BedrockAgent: https://learn.microsoft.com/en-us/semantic-kernel/frameworks/agent/agent-types/bedrock-agent?pivots=programming-language-csharp
+
+Exploring the Semantic Kernel ChatCompletionAgent: https://learn.microsoft.com/en-us/semantic-kernel/frameworks/agent/agent-types/chat-completion-agent?pivots=programming-language-csharp
+
+Exploring the Semantic Kernel CopilotStudioAgent: https://learn.microsoft.com/en-us/semantic-kernel/frameworks/agent/agent-types/copilot-studio-agent?pivots=programming-language-csharp
+
+Exploring the Semantic Kernel OpenAIAssistantAgent: https://learn.microsoft.com/en-us/semantic-kernel/frameworks/agent/agent-types/assistant-agent?pivots=programming-language-csharp
+
+Exploring the Semantic Kernel OpenAIResponsesAgent: https://learn.microsoft.com/en-us/semantic-kernel/frameworks/agent/agent-types/responses-agent?pivots=programming-language-csharp
+
+Semantic Kernel Agent Orchestration: https://learn.microsoft.com/en-us/semantic-kernel/frameworks/agent/agent-orchestration/?pivots=programming-language-csharp
+
+Concurrent Orchestration: https://learn.microsoft.com/en-us/semantic-kernel/frameworks/agent/agent-orchestration/concurrent?pivots=programming-language-csharp
+
+Sequential Orchestration: https://learn.microsoft.com/en-us/semantic-kernel/frameworks/agent/agent-orchestration/sequential?pivots=programming-language-csharp
+
+Group Chat Orchestration: https://learn.microsoft.com/en-us/semantic-kernel/frameworks/agent/agent-orchestration/group-chat?pivots=programming-language-csharp
+
+Handoff Orchestration: https://learn.microsoft.com/en-us/semantic-kernel/frameworks/agent/agent-orchestration/handoff?pivots=programming-language-csharp
+
+Magentic Orchestration: https://learn.microsoft.com/en-us/semantic-kernel/frameworks/agent/agent-orchestration/magentic?pivots=programming-language-csharp
+
+Semantic Kernel Agent Orchestration Advanced Topics: https://learn.microsoft.com/en-us/semantic-kernel/frameworks/agent/agent-orchestration/advanced-topics?pivots=programming-language-csharp
+
+How-To: ChatCompletionAgent: https://learn.microsoft.com/en-us/semantic-kernel/frameworks/agent/examples/example-chat-agent?pivots=programming-language-csharp
+
+How-To: OpenAIAssistantAgent Code Interpreter: https://learn.microsoft.com/en-us/semantic-kernel/frameworks/agent/examples/example-assistant-code?pivots=programming-language-csharp
+
+How-To: OpenAIAssistantAgent File Search: https://learn.microsoft.com/en-us/semantic-kernel/frameworks/agent/examples/example-assistant-search?pivots=programming-language-csharp
+
+Overview of the Process Framework: https://learn.microsoft.com/en-us/semantic-kernel/frameworks/process/process-framework
+
+Core Components of the Process Framework: https://learn.microsoft.com/en-us/semantic-kernel/frameworks/process/process-core-components
+
+Deployment of the Process Framework: https://learn.microsoft.com/en-us/semantic-kernel/frameworks/process/process-deployment
+
+Best Practices for the Process Framework: https://learn.microsoft.com/en-us/semantic-kernel/frameworks/process/process-best-practices
+
+How-To: Create your first Process: https://learn.microsoft.com/en-us/semantic-kernel/frameworks/process/examples/example-first-process?pivots=programming-language-csharp
+
+How-To: Using Cycles: https://learn.microsoft.com/en-us/semantic-kernel/frameworks/process/examples/example-cycles?pivots=programming-language-csharp
+
+How-To: Human-in-the-Loop: https://learn.microsoft.com/en-us/semantic-kernel/frameworks/process/examples/example-human-in-loop?pivots=programming-language-csharp

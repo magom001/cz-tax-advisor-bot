@@ -2,121 +2,106 @@
 
 ## 1. Overview
 
-TaxAdvisorBot is a .NET-based AI tax advisor for Czech personal income tax (DPFO). It uses Retrieval-Augmented Generation (RAG) over Czech tax legislation, deterministic C# calculation plugins, and an agentic orchestration layer powered by Semantic Kernel.
+TaxAdvisorBot is a .NET 10 AI-powered personal tax advisor for Czech income tax (DPFO). It helps employed persons with stock compensation (RSU, ESPP, share sales) prepare their yearly income tax return, producing an uploadable XML file and PDF form.
 
-The system follows a **"Verify-then-Calculate"** pipeline: retrieve relevant law → compute in C# → verify against source text.
+Key technologies: Semantic Kernel (AI orchestration), Qdrant (vector search), MongoDB (persistent storage), Redis (caching), .NET Aspire (orchestration), Azure AI Foundry (LLM models).
 
 ### Design Principles
 
-- **Business logic is platform-agnostic.** All domain logic lives in shared libraries. Platforms (Web, Telegram, CLI) are thin shells.
-- **Code against interfaces, never implementations.** All services are registered and consumed via interfaces.
-- **IOptions pattern everywhere.** Configuration uses strongly-typed models with data annotations and validation.
-- **Non-blocking UI.** Long-running operations push progress updates via SignalR/WebSocket. The client never freezes waiting for a response.
-- **Async jobs via pub/sub.** Document processing, vectorization, and multi-step agent workflows use message queues for decoupling.
+- **Business logic is platform-agnostic.** All domain logic lives in `core/` projects. Platforms (Web, Telegram, CLI) are thin shells.
+- **Code against interfaces, never implementations.** All services consumed via `I*` interfaces through DI.
+- **Repository pattern for data access.** MongoDB repositories behind interfaces in Application layer.
+- **IOptions pattern everywhere.** Config uses strongly-typed models with `[Required]`, `[Url]`, `[Range]` annotations and `ValidateOnStart()`.
+- **Non-blocking UI.** Long-running operations (ingestion, LLM calls) run in background with polling/SSE for progress.
+- **LLM never does math.** All tax calculations happen in deterministic C# plugins.
 
 ---
 
 ## 2. Solution Structure
 
 ```
-TaxAdvisorBot.sln
+TaxAdvisorBot.slnx
 │
 ├── src/
+│   ├── TaxAdvisorBot.AppHost/                     # .NET Aspire orchestrator
+│   │   └── Program.cs                             # Redis, Qdrant, MongoDB, Web
 │   │
-│   ├── TaxAdvisorBot.AppHost/                  # .NET Aspire orchestrator
-│   │   └── Program.cs                          # Wires up all services + dependencies (Qdrant, queues, etc.)
+│   ├── TaxAdvisorBot.ServiceDefaults/             # OpenTelemetry, health checks, resilience
 │   │
-│   ├── TaxAdvisorBot.ServiceDefaults/          # Aspire shared service defaults (telemetry, health checks, resilience)
-│   │
-│   ├── core/                                   # ── Platform-agnostic business logic ──
-│   │   │
-│   │   ├── TaxAdvisorBot.Domain/               # Domain models, enums, value objects
+│   ├── core/
+│   │   ├── TaxAdvisorBot.Domain/                  # Zero dependencies
 │   │   │   ├── Models/
-│   │   │   │   ├── TaxReturn.cs                # Structured state of a tax filing
-│   │   │   │   ├── TaxDocumentContext.cs        # Extracted document fields
-│   │   │   │   └── LegalReference.cs            # Citation model (§, paragraph, source URL)
+│   │   │   │   ├── TaxReturn.cs                   # Mutable tax filing state
+│   │   │   │   ├── StockTransaction.cs            # RSU/ESPP/share sale with 3-year exemption
+│   │   │   │   ├── TaxDocumentContext.cs           # Extracted document fields
+│   │   │   │   ├── LegalReference.cs               # Citation (§, URL)
+│   │   │   │   ├── ChatResponse.cs                 # AI response + citations
+│   │   │   │   └── ProgressUpdate.cs               # Real-time progress payload
 │   │   │   └── Enums/
-│   │   │       └── TaxSection.cs
+│   │   │       ├── TaxSection.cs                   # §6–§10
+│   │   │       ├── FilingStatus.cs                 # Draft → Complete
+│   │   │       ├── StockTransactionType.cs         # RsuVesting, EsppDiscount, ShareSale
+│   │   │       └── DocumentType.cs                 # Employment, brokerage, pension, etc.
 │   │   │
-│   │   ├── TaxAdvisorBot.Application/           # Use cases, interfaces, DTOs
-│   │   │   ├── Interfaces/
+│   │   ├── TaxAdvisorBot.Application/             # Interfaces, DTOs, options
+│   │   │   ├── Interfaces/                        # ← All documented in §4 below
 │   │   │   │   ├── ITaxCalculationService.cs
 │   │   │   │   ├── IDocumentExtractionService.cs
 │   │   │   │   ├── ILegalSearchService.cs
+│   │   │   │   ├── ILegalIngestionService.cs
 │   │   │   │   ├── IConversationService.cs
 │   │   │   │   ├── IExchangeRateService.cs
-│   │   │   │   ├── INotificationService.cs      # Push progress updates to clients
-│   │   │   │   └── IJobQueue.cs                 # Pub/sub abstraction
-│   │   │   ├── DTOs/
-│   │   │   ├── Options/                         # IOptions config models
-│   │   │   │   ├── AzureAIOptions.cs            # Azure Foundry endpoints + model deployment names
-│   │   │   │   ├── QdrantOptions.cs
-│   │   │   │   └── DocumentIntelligenceOptions.cs
-│   │   │   └── Validation/
-│   │   │       └── TaxReturnValidator.cs        # Missing-field detection logic
+│   │   │   │   ├── INotificationService.cs
+│   │   │   │   ├── IJobQueue.cs
+│   │   │   │   ├── IUniformRateRepository.cs
+│   │   │   │   ├── IConversationRepository.cs
+│   │   │   │   └── ITaxReturnRepository.cs
+│   │   │   ├── Options/
+│   │   │   │   ├── AzureAIOptions.cs               # AI endpoint, deployments, API key
+│   │   │   │   ├── QdrantOptions.cs                # Connection string, collection, vector size
+│   │   │   │   └── LegalSourcesOptions.cs          # Legal source URLs for ingestion
+│   │   │   └── ApplicationServiceRegistration.cs   # IOptions binding + validation
 │   │   │
-│   │   └── TaxAdvisorBot.Infrastructure/        # Implementations of Application interfaces
+│   │   └── TaxAdvisorBot.Infrastructure/          # Implementations
 │   │       ├── AI/
-│   │       │   ├── SemanticKernelOrchestrator.cs # Kernel setup, plugin registration
+│   │       │   ├── SemanticKernelRegistration.cs   # Kernel factory with 3 AI services
 │   │       │   └── Plugins/
-│   │       │       ├── TaxCalculationPlugin.cs   # §6, §7, §8, §9, §10 calculations
-│   │       │       ├── TaxValidationPlugin.cs    # GetMissingFields — deterministic C#
-│   │       │       └── ExchangeRatePlugin.cs     # ČNB rate lookup
+│   │       │       ├── TaxCalculationPlugin.cs     # §6, §10 tax, deductions, credits
+│   │       │       ├── TaxValidationPlugin.cs      # Missing-field detection
+│   │       │       └── ExchangeRatePlugin.cs       # ČNB rate conversion
 │   │       ├── Search/
-│   │       │   ├── QdrantLegalSearchService.cs   # Hybrid search (vector + keyword)
-│   │       │   └── EmbeddingService.cs           # Azure AI embeddings
-│   │       ├── Documents/
-│   │       │   └── AzureDocumentExtractionService.cs
+│   │       │   ├── QdrantLegalSearchService.cs     # Hybrid vector + keyword search
+│   │       │   ├── LegalIngestionService.cs        # Real-time LLM chunking + embedding
+│   │       │   ├── BatchLegalIngestionService.cs   # Azure Batch API ingestion
+│   │       │   ├── EmbeddingService.cs             # Azure AI embedding wrapper
+│   │       │   └── ContentExtractor.cs             # HTML (HtmlAgilityPack) + PDF (PdfPig)
 │   │       ├── ExchangeRates/
-│   │       │   └── CnbExchangeRateService.cs
-│   │       ├── Messaging/
-│   │       │   └── InMemoryJobQueue.cs           # Default impl; swappable for RabbitMQ/Azure Service Bus
-│   │       └── DependencyInjection.cs            # IServiceCollection extensions
+│   │       │   ├── CnbExchangeRateService.cs       # ČNB daily rates + Redis caching
+│   │       │   └── UniformRateSeeder.cs            # Seeds §38 rates from appsettings
+│   │       ├── Persistence/
+│   │       │   ├── MongoCollections.cs              # Typed collection accessors + documents
+│   │       │   ├── MongoUniformRateRepository.cs
+│   │       │   ├── MongoConversationRepository.cs
+│   │       │   └── MongoTaxReturnRepository.cs
+│   │       └── DependencyInjection.cs              # Wires everything into IHostApplicationBuilder
 │   │
-│   ├── platforms/                               # ── Thin platform shells ──
-│   │   │
-│   │   ├── TaxAdvisorBot.Web/                   # ASP.NET Core + Blazor / SignalR
-│   │   │   ├── Hubs/
-│   │   │   │   └── ChatHub.cs                   # SignalR hub for real-time chat + progress
-│   │   │   ├── Controllers/
-│   │   │   │   └── DocumentController.cs        # File upload endpoint
-│   │   │   ├── wwwroot/
-│   │   │   ├── Program.cs                       # HostBuilder, DI, middleware
-│   │   │   └── appsettings.json
-│   │   │
-│   │   ├── TaxAdvisorBot.Telegram/              # Telegram Bot SDK
-│   │   │   ├── Handlers/
-│   │   │   │   ├── MessageHandler.cs
-│   │   │   │   └── DocumentHandler.cs
-│   │   │   ├── Program.cs                       # HostBuilder, DI
-│   │   │   └── appsettings.json
-│   │   │
-│   │   └── TaxAdvisorBot.Cli/                   # Console REPL
-│   │       ├── Commands/
-│   │       │   ├── ChatCommand.cs
-│   │       │   └── ProcessFileCommand.cs
-│   │       ├── Program.cs                       # HostBuilder, DI
-│   │       └── appsettings.json
-│   │
-│   └── tools/                                   # ── Offline / maintenance utilities ──
-│       └── TaxAdvisorBot.Ingestion/             # CLI tool to ingest & vectorize legal texts
-│           ├── Program.cs
-│           └── Pipelines/
-│               ├── LegalTextIngestionPipeline.cs
-│               └── ChunkingStrategy.cs          # Split by § / article boundaries
+│   └── platforms/
+│       ├── TaxAdvisorBot.Web/                     # ASP.NET Core
+│       │   ├── Program.cs                         # API endpoints (search, ingest, rates)
+│       │   ├── wwwroot/index.html                 # Knowledge base UI + search
+│       │   └── appsettings.json                   # Legal sources, uniform rates
+│       │
+│       └── TaxAdvisorBot.Cli/                     # Console app
+│           └── Program.cs                         # HostBuilder + ServiceDefaults
 │
 ├── tests/
-│   ├── TaxAdvisorBot.Domain.Tests/
-│   ├── TaxAdvisorBot.Application.Tests/
-│   ├── TaxAdvisorBot.Infrastructure.Tests/
-│   └── TaxAdvisorBot.Integration.Tests/         # Golden-case tax scenarios
+│   ├── TaxAdvisorBot.Domain.Tests/                # 37 tests — models, computed properties
+│   ├── TaxAdvisorBot.Application.Tests/           # 13 tests — options validation
+│   └── TaxAdvisorBot.Infrastructure.Tests/        # 41 tests — plugins, exchange rates
 │
-├── docs/
-│   ├── premise.md
-│   └── Architecture.md                          # ← this file
-│
-└── docker/
-    └── docker-compose.yml                       # Qdrant + any other local dependencies
+└── docs/
+    ├── premise.md
+    └── Architecture.md                            # ← this file
 ```
 
 ---
@@ -124,199 +109,182 @@ TaxAdvisorBot.sln
 ## 3. Dependency Flow
 
 ```
-Platforms (Web, Telegram, CLI)
+Platforms (Web, CLI)
        │
        ▼
-  Application  (interfaces, DTOs, options)
+  Application  (interfaces, DTOs, options — no implementations)
        │
        ▼
-  Infrastructure  (implementations: Semantic Kernel, Qdrant, Azure AI, ČNB)
+  Infrastructure  (Semantic Kernel, Qdrant, MongoDB, ČNB, Azure AI)
        │
        ▼
     Domain  (models, enums — zero dependencies)
 ```
 
 - **Domain** depends on nothing.
-- **Application** depends on Domain.
-- **Infrastructure** depends on Application + Domain (implements the interfaces).
-- **Platforms** depend on Application (consume interfaces via DI). They do **not** reference Infrastructure directly — registration happens through `IServiceCollection` extensions.
+- **Application** depends on Domain. Defines interfaces and DTOs only.
+- **Infrastructure** depends on Application + Domain. Implements all interfaces.
+- **Platforms** reference Application + Infrastructure. Call `builder.AddApplicationOptions()` and `builder.AddInfrastructureServices()` to wire everything via DI.
 
 ---
 
-## 4. Configuration & Secrets
+## 4. Interfaces (Application Layer)
 
-| Environment | Mechanism |
-|---|---|
-| Local development | `dotnet user-secrets` per platform project |
-| Aspire orchestration | Environment variables injected by AppHost |
-| Production | Azure Key Vault / environment variables |
+### Service Interfaces
 
-All configuration sections use the **IOptions pattern**:
-
-```csharp
-public class AzureAIOptions
-{
-    public const string SectionName = "AzureAI";
-
-    [Required, Url]
-    public string Endpoint { get; set; } = string.Empty;
-
-    [Required]
-    public string ApiKey { get; set; } = string.Empty;
-
-    [Required]
-    public string ChatDeploymentName { get; set; } = string.Empty;
-
-    [Required]
-    public string EmbeddingDeploymentName { get; set; } = string.Empty;
-}
-```
-
-Registration:
-```csharp
-services.AddOptions<AzureAIOptions>()
-    .BindConfiguration(AzureAIOptions.SectionName)
-    .ValidateDataAnnotations()
-    .ValidateOnStart();
-```
-
----
-
-## 5. .NET Aspire Orchestration
-
-`TaxAdvisorBot.AppHost` defines the distributed application:
-
-```csharp
-var builder = DistributedApplication.CreateBuilder(args);
-
-// Infrastructure dependencies
-var qdrant = builder.AddQdrant("qdrant");
-
-// Core API / worker
-var api = builder.AddProject<Projects.TaxAdvisorBot_Web>("web")
-    .WithReference(qdrant);
-
-builder.Build().Run();
-```
-
-Aspire provides:
-- **Service discovery** — platforms find Qdrant, queues, etc. by name.
-- **Health checks & telemetry** — via `ServiceDefaults`.
-- **Dashboard** — local observability for all services.
-
----
-
-## 6. Real-Time Communication
-
-All platforms push progress updates for long-running operations:
-
-| Platform | Transport | Mechanism |
+| Interface | Purpose | Implementation |
 |---|---|---|
-| Web | SignalR (WebSocket with fallback) | `ChatHub` pushes agent step updates, typing indicators, citations |
-| Telegram | Telegram Bot API | `sendChatAction("typing")` + incremental message edits |
-| CLI | Console streaming | `IAsyncEnumerable<string>` streamed to stdout |
+| `ITaxCalculationService` | Deterministic tax math — §6/§10 income, deductions, credits. Returns `TaxCalculationResult` with amount + citations. | `TaxCalculationPlugin` (Semantic Kernel) |
+| `IDocumentExtractionService` | Extracts structured data from uploaded documents (PDF, images) via LLM. Returns `TaxDocumentContext` with confidence scores. | LLM-based (gpt-4.1-mini) |
+| `ILegalSearchService` | Hybrid vector + keyword search over Czech tax law in Qdrant. Filters by `effective_year`. Returns ranked `LegalSearchResult` list. | `QdrantLegalSearchService` |
+| `ILegalIngestionService` | Scrapes legal text from URLs, chunks by § using LLM, embeds, stores in Qdrant. Supports `ResetCollectionAsync` for re-ingestion. | `LegalIngestionService` (streaming) |
+| `IConversationService` | Multi-turn AI chat. Streams responses via `IAsyncEnumerable<string>`. Maintains per-session history. | (planned) |
+| `IExchangeRateService` | ČNB daily exchange rates (API) + §38 uniform yearly rates (manual config). Caches in Redis. | `CnbExchangeRateService` |
+| `INotificationService` | Pushes `ProgressUpdate` and `ChatResponse` to connected clients. Platform-specific implementations. | (per platform) |
+| `IJobQueue` | Generic pub/sub for async background processing. `EnqueueAsync<T>` / `DequeueAsync<T>`. | In-memory channels (default) |
 
-The core `INotificationService` interface abstracts this:
+### Repository Interfaces
 
-```csharp
-public interface INotificationService
-{
-    Task SendProgressAsync(string sessionId, ProgressUpdate update);
-    Task SendCompletionAsync(string sessionId, ChatResponse response);
-}
-```
-
-Each platform provides its own implementation.
+| Interface | Purpose | Implementation |
+|---|---|---|
+| `IUniformRateRepository` | CRUD for §38 uniform yearly exchange rates. `GetRateAsync(year, currency)`, `SetRateAsync`, `GetAllAsync`. | `MongoUniformRateRepository` |
+| `IConversationRepository` | Conversation history persistence. `GetAsync(sessionId)`, `AddMessageAsync`, `SaveAsync`, `DeleteAsync`. | `MongoConversationRepository` |
+| `ITaxReturnRepository` | Tax return state persistence. `GetAsync(id)`, `GetByYearAsync`, `SaveAsync`, `GetAllAsync`. | `MongoTaxReturnRepository` |
 
 ---
 
-## 7. Async Job Processing
+## 5. Configuration (IOptions)
 
-Long-running tasks (document extraction, full vectorization, multi-step agent runs) are dispatched through `IJobQueue`:
+| Options Class | Config Section | Key Fields |
+|---|---|---|
+| `AzureAIOptions` | `AzureAI` | `Endpoint` [Required, Url], `ApiKey` [Required], `ChatDeploymentName` (gpt-4.1), `FastChatDeploymentName` (gpt-4.1-mini), `ReasoningDeploymentName` (o4-mini, optional), `BatchDeploymentName` (optional), `BatchEndpoint` (optional), `EmbeddingDeploymentName` |
+| `QdrantOptions` | `Qdrant` | `ConnectionString` [Required] (injected by Aspire), `CollectionName` (default: czech-tax), `VectorSize` (default: 1536) |
+| `LegalSourcesOptions` | `LegalSources` | `Sources[]` — list of `LegalSource` { Name, Url, DocumentType, Description } |
 
-```
-Client → Platform → IJobQueue.EnqueueAsync(job)
-                          │
-                          ▼
-                    Worker picks up job
-                          │
-                          ▼
-              INotificationService.SendProgressAsync(...)
-                          │
-                          ▼
-              INotificationService.SendCompletionAsync(...)
+Uniform exchange rates are stored in `appsettings.json` under `UniformRates` and seeded into MongoDB on startup:
+```json
+"UniformRates": { "2024:USD": 23.14, "2025:USD": 23.48 }
 ```
 
-Default implementation: in-memory channel (sufficient for single-instance dev).  
-Production: swap to RabbitMQ, Azure Service Bus, or Redis Streams via DI registration.
+---
+
+## 6. .NET Aspire Orchestration
+
+```csharp
+var redis = builder.AddRedis("cache");
+
+var qdrant = builder.AddQdrant("qdrant")
+    .WithDataVolume("qdrant-data")
+    .WithLifetime(ContainerLifetime.Persistent);
+
+var mongo = builder.AddMongoDB("mongodb")
+    .WithDataVolume("mongo-data")
+    .WithLifetime(ContainerLifetime.Persistent);
+
+var mongoDB = mongo.AddDatabase("taxadvisor");
+
+var web = builder.AddCSharpApp("web", "...")
+    .WithReference(redis)
+    .WithReference(qdrant)
+    .WithReference(mongoDB);
+```
+
+| Resource | Purpose | Persistent |
+|---|---|---|
+| **Redis** | Distributed cache (exchange rates, session data) | No (ephemeral cache) |
+| **Qdrant** | Vector DB for RAG search over Czech tax law | Yes (Docker volume) |
+| **MongoDB** | Conversations, tax returns, uniform rates | Yes (Docker volume) |
+
+---
+
+## 7. Semantic Kernel Plugins
+
+Three AI services are registered with the Kernel:
+
+| Service ID | Deployment | Use |
+|---|---|---|
+| `chat` | gpt-4.1 | Legal analysis, complex reasoning, citation generation |
+| `fast-chat` | gpt-4.1-mini | Data extraction, ingestion chunking, simple Q&A |
+| `reasoning` | o4-mini | Multi-step tax verification (optional) |
+
+Three native C# plugins:
+
+| Plugin | Functions | Description |
+|---|---|---|
+| `TaxCalculation` | `CalculateSection6TaxBase`, `CalculateSection10Tax`, `CalculateIncomeTax`, `ApplyDeductions`, `ApplyCredits` | Deterministic tax math — 15% base rate, 23% solidarity surcharge, §15 deduction caps, §35ba/§35c credits |
+| `TaxValidation` | `GetMissingFields` | Checks `TaxReturn` for incomplete data — personal details, employment consistency, stock transactions, foreign income |
+| `ExchangeRate` | `ConvertToCzkAsync`, `GetDailyRateAsync`, `GetUniformRateAsync` | ČNB exchange rates for foreign income conversion |
 
 ---
 
 ## 8. RAG Pipeline
 
-### Ingestion (offline — `TaxAdvisorBot.Ingestion`)
+### Ingestion
 
-1. **Extract** — Azure AI Document Intelligence (Layout model) → Markdown/JSON.
-2. **Chunk** — Split by `§` paragraph boundaries. Prepend section title for context.
-3. **Embed** — Azure AI embeddings (`text-embedding-3-small` or equivalent deployment).
-4. **Store** — Upsert into Qdrant with metadata: `paragraph_id`, `effective_year`, `source_url`, `document_type`.
+Two modes:
 
-### Retrieval (runtime — `QdrantLegalSearchService`)
+1. **Real-time** (`LegalIngestionService`) — per-source, streaming LLM calls via `GetStreamingChatMessageContentsAsync`. Used by "Ingest All" button.
+2. **Batch** (`BatchLegalIngestionService`) — all sources in one JSONL file via Azure OpenAI Batch API (50% cheaper). Requires GlobalBatch deployment.
 
-- **Hybrid search**: vector similarity + keyword filtering.
-- **Metadata filter**: always scope to the relevant `effective_year`.
-- **Minimum score threshold**: discard low-confidence results; surface "no relevant law found" rather than hallucinate.
+Pipeline: Scrape URL → `ContentExtractor` (HTML via HtmlAgilityPack / PDF via PdfPig) → split into 30k-char batches → LLM extracts § paragraphs as JSON → embed via `text-embedding-ada-002` → upsert into Qdrant with metadata.
 
----
+Legal sources are configured in `appsettings.json` under `LegalSources:Sources[]`.
 
-## 9. Agentic Pipeline
+### Retrieval (`QdrantLegalSearchService`)
 
-Single orchestrator agent with native C# plugins (start simple, graduate to multi-agent only when needed):
-
-```
-User query
-    │
-    ▼
-Orchestrator (Semantic Kernel ChatCompletionAgent)
-    ├── calls LegalSearchPlugin     → retrieves § from Qdrant
-    ├── calls TaxCalculationPlugin  → deterministic C# math
-    ├── calls TaxValidationPlugin   → checks missing fields
-    ├── calls ExchangeRatePlugin    → ČNB rates
-    └── returns response with citations
-```
-
-- **LLM**: Azure AI (GPT-4o or equivalent deployment in Azure Foundry).
-- **Math**: Always in C# plugins. The LLM is never trusted with arithmetic.
-- **Citations**: Every response includes `LegalReference` objects linking to specific `§` and source.
+- **Hybrid search**: vector similarity + keyword filtering for exact § references
+- **Metadata filter**: always scope by `effective_year`
+- **Minimum score threshold** (0.65): discard low-confidence results
 
 ---
 
-## 10. Security & PII
+## 9. Persistence (MongoDB)
 
-- **Secrets**: Never in source. `dotnet user-secrets` locally, Key Vault in production.
-- **PII scrubbing**: Sensitive fields (rodné číslo, bank accounts) are stripped before any LLM API call.
-- **Data at rest**: Qdrant storage volume encrypted at the OS/container level.
+Repository pattern — interfaces in Application, MongoDB implementations in Infrastructure.
+
+| Collection | Document | Repository | Purpose |
+|---|---|---|---|
+| `uniform_rates` | `UniformRateDocument` | `MongoUniformRateRepository` | §38 yearly exchange rates |
+| `conversations` | `ConversationDocument` | `MongoConversationRepository` | Chat history with atomic message append |
+| `tax_returns` | `TaxReturnDocument` | `MongoTaxReturnRepository` | Full `TaxReturn` as BSON document |
+
+Seeded from `appsettings.json` on startup via `UniformRateSeeder` (`IHostedService`).
+
+---
+
+## 10. Web API Endpoints
+
+| Method | Path | Description |
+|---|---|---|
+| GET | `/api/sources` | List configured legal sources from appsettings |
+| GET | `/api/search?q=...&year=2025` | Search the RAG knowledge base |
+| POST | `/api/ingest` | Start background ingestion for a single source |
+| GET | `/api/ingest/{jobId}` | Poll ingestion job status |
+| POST | `/api/ingest/reset` | Wipe and recreate the Qdrant collection |
+| POST | `/api/batch-ingest` | Start batch ingestion of all sources |
+| GET | `/api/batch-ingest/status` | Poll batch ingestion progress |
+| GET | `/api/rates` | List all uniform exchange rates |
+| POST | `/api/rates` | Set a uniform exchange rate |
+
+---
+
+## 11. Security & PII
+
+- **Secrets**: `dotnet user-secrets` locally, Key Vault in production. Never in source.
+- **PII**: Sensitive fields (rodné číslo, bank accounts) to be stripped before LLM API calls.
 - **Transport**: All API calls over HTTPS.
-- **File uploads**: Scanned for size/type constraints before processing. Stored temporarily, deleted after extraction.
-
----
-
-## 11. Observability
-
-- **Aspire Dashboard**: Local telemetry for all services.
-- **Structured logging**: `ILogger<T>` with correlation IDs per conversation session.
-- **Agent audit trail**: Every orchestrator step logs: query → retrieved chunks (with scores) → LLM prompt → LLM response → final answer.
-- **Health checks**: Qdrant connectivity, Azure AI endpoint availability.
+- **File uploads**: Size/type constraints enforced before processing.
 
 ---
 
 ## 12. Testing Strategy
 
-| Layer | What | Tool |
+| Layer | Tests | Coverage |
 |---|---|---|
-| Domain | Value object invariants, model validation | xUnit |
-| Application | Validation logic, missing-field detection | xUnit + mocks |
-| Infrastructure | Plugin calculations, search accuracy | xUnit + Qdrant testcontainer |
-| Integration | "Golden case" end-to-end tax scenarios | xUnit + WebApplicationFactory |
+| Domain (37) | `TaxReturn` computed properties, `StockTransaction` 3-year exemption, record equality | Models, enums |
+| Application (13) | Options validation — missing fields, invalid URLs, range constraints | IOptions |
+| Infrastructure (41) | Tax calculation plugin (income tax, deductions, credits), validation plugin, ČNB exchange rates (mocked HTTP + cache) | Plugins, services |
 
-Golden cases: a suite of known tax scenarios (§10 RSU income, §6 employment, foreign dividends) with expected outputs, run on every CI build.
+Total: **91 tests**, all passing.
+
+Golden cases: `TaxAdvisorBot.Integration.Tests` (planned) — known tax scenarios with expected outputs.

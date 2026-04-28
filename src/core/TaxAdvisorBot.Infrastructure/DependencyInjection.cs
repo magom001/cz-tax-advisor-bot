@@ -3,10 +3,13 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Microsoft.SemanticKernel;
+using MongoDB.Driver;
 using Qdrant.Client;
 using TaxAdvisorBot.Application.Interfaces;
 using TaxAdvisorBot.Application.Options;
 using TaxAdvisorBot.Infrastructure.AI;
+using TaxAdvisorBot.Infrastructure.ExchangeRates;
+using TaxAdvisorBot.Infrastructure.Persistence;
 using TaxAdvisorBot.Infrastructure.Search;
 
 namespace TaxAdvisorBot.Infrastructure;
@@ -16,6 +19,15 @@ public static class DependencyInjection
     public static IHostApplicationBuilder AddInfrastructureServices(this IHostApplicationBuilder builder)
     {
         builder.AddRedisDistributedCache("cache");
+
+        // MongoDB — persistent storage for conversations, tax returns, uniform rates
+        builder.AddMongoDBClient("taxadvisor");
+        builder.Services.AddSingleton<MongoCollections>(sp =>
+        {
+            var client = sp.GetRequiredService<IMongoClient>();
+            var database = client.GetDatabase("taxadvisor");
+            return new MongoCollections(database);
+        });
 
         builder.Services.AddSemanticKernel();
 
@@ -59,6 +71,17 @@ public static class DependencyInjection
             return kernel.GetRequiredService<Microsoft.Extensions.AI.IEmbeddingGenerator<string, Microsoft.Extensions.AI.Embedding<float>>>();
         });
 #pragma warning restore SKEXP0010
+
+        // Exchange rates
+        builder.Services.AddSingleton<IUniformRateRepository, MongoUniformRateRepository>();
+        builder.Services.AddHttpClient<IExchangeRateService, CnbExchangeRateService>();
+
+        // Seed uniform rates from appsettings on startup
+        builder.Services.AddHostedService<UniformRateSeeder>();
+
+        // Repositories
+        builder.Services.AddSingleton<IConversationRepository, MongoConversationRepository>();
+        builder.Services.AddSingleton<ITaxReturnRepository, MongoTaxReturnRepository>();
 
         // Legal search
         builder.Services.AddSingleton<ILegalSearchService, QdrantLegalSearchService>();

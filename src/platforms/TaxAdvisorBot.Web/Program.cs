@@ -31,6 +31,16 @@ app.MapGet("/api/search", async (string q, int? year, ILegalSearchService search
     return Results.Ok(results);
 });
 
+// Uniform exchange rates
+app.MapGet("/api/rates", async (IUniformRateRepository repo, CancellationToken ct) =>
+    Results.Ok(await repo.GetAllAsync(ct)));
+
+app.MapPost("/api/rates", async (UniformRateRequest req, IUniformRateRepository repo, CancellationToken ct) =>
+{
+    await repo.SetRateAsync(req.Year, req.CurrencyCode, req.Rate, ct);
+    return Results.Ok(new { message = $"Set {req.Year}:{req.CurrencyCode} = {req.Rate}" });
+});
+
 // Reset the Qdrant collection (wipe before re-ingestion)
 app.MapPost("/api/ingest/reset", async (ILegalIngestionService ingestion, CancellationToken ct) =>
 {
@@ -92,6 +102,7 @@ app.Run();
 
 record IngestRequest(string Url, int Year);
 record BatchIngestRequest(int Year);
+record UniformRateRequest(int Year, string CurrencyCode, decimal Rate);
 
 class IngestionJob(string url)
 {
