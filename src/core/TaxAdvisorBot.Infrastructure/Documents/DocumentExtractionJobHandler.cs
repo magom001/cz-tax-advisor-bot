@@ -21,6 +21,7 @@ public sealed class DocumentExtractionJobHandler : IJobHandler<DocumentUploadJob
     private readonly Kernel _kernel;
     private readonly ContentExtractor _contentExtractor;
     private readonly ITaxReturnRepository _taxReturnRepo;
+    private readonly IExchangeRateService _exchangeRateService;
     private readonly INotificationService _notificationService;
     private readonly ILogger<DocumentExtractionJobHandler> _logger;
 
@@ -28,12 +29,14 @@ public sealed class DocumentExtractionJobHandler : IJobHandler<DocumentUploadJob
         Kernel kernel,
         ContentExtractor contentExtractor,
         ITaxReturnRepository taxReturnRepo,
+        IExchangeRateService exchangeRateService,
         INotificationService notificationService,
         ILogger<DocumentExtractionJobHandler> logger)
     {
         _kernel = kernel;
         _contentExtractor = contentExtractor;
         _taxReturnRepo = taxReturnRepo;
+        _exchangeRateService = exchangeRateService;
         _notificationService = notificationService;
         _logger = logger;
     }
@@ -43,7 +46,7 @@ public sealed class DocumentExtractionJobHandler : IJobHandler<DocumentUploadJob
         _logger.LogInformation("Processing document: {FileName} ({ContentType}, {Size} bytes)",
             job.FileName, job.ContentType, job.Data.Length);
 
-        await _notificationService.SendProgressAsync("document",
+        await _notificationService.SendProgressAsync(job.FileName,
             new ProgressUpdate("Extracting text", 10, $"Reading {job.FileName}..."), cancellationToken);
 
         // Extract text from the document
@@ -52,14 +55,14 @@ public sealed class DocumentExtractionJobHandler : IJobHandler<DocumentUploadJob
         if (string.IsNullOrWhiteSpace(text) || text.Length < 50)
         {
             _logger.LogWarning("Document {FileName} produced insufficient text ({Length} chars)", job.FileName, text.Length);
-            await _notificationService.SendProgressAsync("document",
+            await _notificationService.SendProgressAsync(job.FileName,
                 new ProgressUpdate("Failed", 100, $"Could not extract meaningful text from {job.FileName}"), cancellationToken);
             return;
         }
 
         _logger.LogInformation("Extracted {Length} chars from {FileName}", text.Length, job.FileName);
 
-        await _notificationService.SendProgressAsync("document",
+        await _notificationService.SendProgressAsync(job.FileName,
             new ProgressUpdate("Analyzing", 40, "Sending to AI for data extraction..."), cancellationToken);
 
         // Detect document type and extract structured data
@@ -67,18 +70,18 @@ public sealed class DocumentExtractionJobHandler : IJobHandler<DocumentUploadJob
 
         if (result is null)
         {
-            await _notificationService.SendProgressAsync("document",
+            await _notificationService.SendProgressAsync(job.FileName,
                 new ProgressUpdate("Failed", 100, $"AI could not extract data from {job.FileName}"), cancellationToken);
             return;
         }
 
-        await _notificationService.SendProgressAsync("document",
+        await _notificationService.SendProgressAsync(job.FileName,
             new ProgressUpdate("Saving", 80, $"Extracted {result.TransactionCount} items from {job.FileName}"), cancellationToken);
 
         // Save to repository
         await ApplyExtractionResultAsync(result, cancellationToken);
 
-        await _notificationService.SendProgressAsync("document",
+        await _notificationService.SendProgressAsync(job.FileName,
             new ProgressUpdate("Done", 100, $"Processed {job.FileName}: {result.Summary}"), cancellationToken);
 
         _logger.LogInformation("Document {FileName} processed: {Summary}", job.FileName, result.Summary);
@@ -100,14 +103,31 @@ public sealed class DocumentExtractionJobHandler : IJobHandler<DocumentUploadJob
     {
         var chatService = _kernel.GetRequiredService<IChatCompletionService>("fast-chat");
 
+        // Truncate very long documents to avoid context window issues
+        if (text.Length > 50_000)
+        {
+            _logger.LogWarning("Document text truncated from {Original} to 50000 chars", text.Length);
+            text = text[..50_000];
+        }
+
         var history = new ChatHistory();
         history.AddSystemMessage(ExtractionPrompt);
         history.AddUserMessage($"File: {fileName}\n\n{text}");
 
         try
         {
-            var response = await chatService.GetChatMessageContentAsync(history, cancellationToken: ct);
-            var json = response.Content?.Trim() ?? "";
+            // Use streaming to avoid HttpClient timeout on large documents
+            var sb = new StringBuilder();
+            await foreach (var chunk in chatService.GetStreamingChatMessageContentsAsync(history, cancellationToken: ct))
+            {
+                if (chunk.Content is not null)
+                    sb.Append(chunk.Content);
+            }
+
+            var json = sb.ToString().Trim();
+
+            _logger.LogDebug("LLM extraction response for {FileName}: {Response}", fileName,
+                json.Length > 500 ? json[..500] + "..." : json);
 
             // Strip markdown fences
             if (json.StartsWith("```"))
@@ -118,9 +138,14 @@ public sealed class DocumentExtractionJobHandler : IJobHandler<DocumentUploadJob
                 PropertyNameCaseInsensitive = true
             });
         }
+        catch (JsonException ex)
+        {
+            _logger.LogWarning(ex, "Failed to parse LLM extraction JSON for {FileName}", fileName);
+            return null;
+        }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to parse LLM extraction response for {FileName}", fileName);
+            _logger.LogWarning(ex, "LLM extraction failed for {FileName}", fileName);
             return null;
         }
     }
@@ -145,19 +170,36 @@ public sealed class DocumentExtractionJobHandler : IJobHandler<DocumentUploadJob
         {
             foreach (var tx in result.StockTransactions)
             {
+                var acquisitionDate = DateOnly.TryParse(tx.Date, out var date) ? date : DateOnly.FromDateTime(DateTime.Today);
+                var currencyCode = tx.CurrencyCode ?? "USD";
+
+                // Fetch ČNB exchange rate for the transaction date
+                decimal? exchangeRate = null;
+                try
+                {
+                    exchangeRate = await _exchangeRateService.GetDailyRateAsync(acquisitionDate, currencyCode, ct);
+                    _logger.LogDebug("Fetched ČNB rate for {Date} {Currency}: {Rate}", acquisitionDate, currencyCode, exchangeRate);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to fetch ČNB rate for {Date} {Currency}", acquisitionDate, currencyCode);
+                }
+
                 taxReturn.StockTransactions.Add(new StockTransaction
                 {
                     TransactionType = Enum.TryParse<StockTransactionType>(tx.Type, true, out var type)
                         ? type : StockTransactionType.RsuVesting,
                     Ticker = tx.Ticker ?? "UNKNOWN",
-                    Quantity = tx.Quantity,
-                    AcquisitionDate = DateOnly.TryParse(tx.Date, out var date) ? date : DateOnly.FromDateTime(DateTime.Today),
-                    AcquisitionPricePerShare = tx.PricePerShare,
+                    Quantity = tx.Quantity ?? 0,
+                    AcquisitionDate = acquisitionDate,
+                    AcquisitionPricePerShare = tx.PricePerShare ?? 0,
                     SalePricePerShare = tx.SalePricePerShare,
                     EsppPurchasePricePerShare = tx.EsppPurchasePrice,
-                    CurrencyCode = tx.CurrencyCode ?? "USD",
+                    CurrencyCode = currencyCode,
+                    ExchangeRate = exchangeRate,
                     BrokerName = tx.BrokerName,
-                    TaxWithheldAbroad = tx.TaxWithheld,
+                    TaxWithheldAbroad = tx.TaxWithheld ?? 0,
+                    GrossAmount = tx.Amount,
                 });
             }
         }
@@ -180,7 +222,7 @@ public sealed class DocumentExtractionJobHandler : IJobHandler<DocumentUploadJob
         Return a JSON object with these fields (include only what's found in the document):
         
         {
-          "taxYear": 2025,
+          "taxYear": 2024,
           "documentType": "BrokerageStatement" | "EmploymentConfirmation" | "PensionFundStatement" | "LifeInsuranceStatement" | "MortgageConfirmation" | "DonationReceipt",
           "employment": {
             "grossIncome": 0,
@@ -191,12 +233,12 @@ public sealed class DocumentExtractionJobHandler : IJobHandler<DocumentUploadJob
           "stockTransactions": [
             {
               "type": "RsuVesting" | "EsppDiscount" | "ShareSale" | "Dividend" | "TaxWithheld",
-              "date": "2025-03-15",
+              "date": "2024-03-15",
               "ticker": "MSFT",
               "quantity": 10,
-              "pricePerShare": 400.00,
+              "pricePerShare": 420.72,
               "salePricePerShare": null,
-              "esppPurchasePrice": null,
+              "esppPurchasePrice": 378.65,
               "amount": 4000.00,
               "currencyCode": "USD",
               "brokerName": "Fidelity",
@@ -212,9 +254,37 @@ public sealed class DocumentExtractionJobHandler : IJobHandler<DocumentUploadJob
           "summary": "Brief description of what was extracted"
         }
         
+        CRITICAL — TAX YEAR DETECTION:
+        - The taxYear is the CALENDAR YEAR in which the transactions occurred.
+        - Look at the statement period header (e.g. "January 1, 2024 - January 31, 2024" → taxYear = 2024).
+        - Look at transaction dates. If all transactions are in 2024, taxYear = 2024.
+        - Do NOT assume the current year. Read the actual dates from the document.
+        
+        CRITICAL — ESPP (Employee Stock Purchase Plan):
+        - ESPP reports have a dedicated "Employee Stock Purchase Summary" section with these columns:
+          * "Purchase Price" = the DISCOUNTED price the employee paid → put in "esppPurchasePrice"
+          * "Purchase Date Fair Market Value" or "FMV" = the actual market price at purchase → put in "pricePerShare"
+          * "Shares Purchased" = number of shares → put in "quantity"
+          * "Gain from Purchase" = (FMV - Purchase Price) × shares (informational, do not extract)
+        - The "pricePerShare" field MUST be the Fair Market Value (FMV), NOT the purchase price.
+        - The "esppPurchasePrice" field MUST be the discounted purchase price.
+        - Example: Purchase Price $378.65, FMV $420.72, Shares 2.408
+          → pricePerShare: 420.72, esppPurchasePrice: 378.65, quantity: 2.408
+        
         Rules:
-        - Extract ALL transactions found in the document, not just the first one.
-        - For brokerage statements, identify RSU vesting, ESPP purchases, dividends, and taxes withheld.
+        - Only extract these transaction types — IGNORE everything else:
+          * RSU vesting ("Shares Deposited", "Vesting") → type "RsuVesting"
+          * ESPP purchases (from the "Employee Stock Purchase Summary" section) → type "EsppDiscount"
+          * Share sales (explicit sale with proceeds/gain/loss) → type "ShareSale"
+          * Dividends (MSFT dividend payments) → type "Dividend"
+          * Tax withheld on dividends → type "TaxWithheld"
+        - IGNORE: internal cash adjustments, money market fund interest (e.g. "Fidelity Government Cash Reserves"),
+          SPP purchase credits, core fund activity, small rounding amounts, and any transaction where ticker is unknown.
+        - The ticker must be a real stock symbol (e.g. "MSFT"). If you cannot determine the ticker, skip the transaction.
+        - "Shares Deposited" or "Vesting" = type "RsuVesting". Do NOT mark these as "ShareSale".
+        - Only use "ShareSale" if the document explicitly shows shares being SOLD (proceeds, sale date, gain/loss).
+        - For dividends, quantity and pricePerShare can be null — just set the amount.
+        - For tax withheld on dividends, use negative amount and type "TaxWithheld".
         - Amounts should be in the original currency (usually USD for US brokers).
         - Dates in yyyy-MM-dd format.
         - Return ONLY the JSON, no markdown fences or explanations.
@@ -251,14 +321,14 @@ internal sealed class StockTransactionData
     public string? Type { get; set; }
     public string? Date { get; set; }
     public string? Ticker { get; set; }
-    public decimal Quantity { get; set; }
-    public decimal PricePerShare { get; set; }
+    public decimal? Quantity { get; set; }
+    public decimal? PricePerShare { get; set; }
     public decimal? SalePricePerShare { get; set; }
     public decimal? EsppPurchasePrice { get; set; }
-    public decimal Amount { get; set; }
+    public decimal? Amount { get; set; }
     public string? CurrencyCode { get; set; }
     public string? BrokerName { get; set; }
-    public decimal TaxWithheld { get; set; }
+    public decimal? TaxWithheld { get; set; }
 }
 
 internal sealed class DeductionData

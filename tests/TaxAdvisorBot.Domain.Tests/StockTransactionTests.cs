@@ -207,4 +207,43 @@ public sealed class StockTransactionTests
 
         Assert.Equal(14_250m, tx.TotalAcquisitionCost);
     }
+
+    // ── Dividend ──
+
+    [Fact]
+    public void Dividend_IsNeverExempt()
+    {
+        var tx = new StockTransaction
+        {
+            TransactionType = StockTransactionType.Dividend,
+            Ticker = "MSFT",
+            Quantity = 0,
+            AcquisitionDate = new DateOnly(2025, 5, 15),
+            AcquisitionPricePerShare = 0,
+            CurrencyCode = "USD",
+            GrossAmount = 206.58m,
+            ExchangeRate = 23.15m,
+        };
+
+        Assert.False(tx.IsExemptFromTax);
+        Assert.Equal(206.58m, tx.GrossAmount);
+    }
+
+    [Fact]
+    public void TaxWithheld_StoresGrossAmount()
+    {
+        var tx = new StockTransaction
+        {
+            TransactionType = StockTransactionType.TaxWithheld,
+            Ticker = "MSFT",
+            Quantity = 0,
+            AcquisitionDate = new DateOnly(2025, 5, 15),
+            AcquisitionPricePerShare = 0,
+            CurrencyCode = "USD",
+            GrossAmount = -30.83m,
+            ExchangeRate = 23.15m,
+        };
+
+        Assert.Equal(-30.83m, tx.GrossAmount);
+    }
 }

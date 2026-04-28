@@ -12,5 +12,11 @@ public enum StockTransactionType
     EsppDiscount,
 
     /// <summary>Sale of shares — taxed under §10 (other income). Exempt if held &gt; 3 years.</summary>
-    ShareSale
+    ShareSale,
+
+    /// <summary>Dividend payment — taxed in the USA (W-8BEN), reported under §8 capital income.</summary>
+    Dividend,
+
+    /// <summary>Tax withheld abroad on dividends or other income.</summary>
+    TaxWithheld
 }

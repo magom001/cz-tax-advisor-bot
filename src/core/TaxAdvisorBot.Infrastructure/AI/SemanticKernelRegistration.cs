@@ -19,6 +19,7 @@ public static class SemanticKernelRegistration
         services.AddSingleton<TaxCalculationPlugin>();
         services.AddSingleton<TaxValidationPlugin>();
         services.AddSingleton<ExchangeRatePlugin>();
+        services.AddSingleton<TaxReturnPlugin>();
 
         // Override the kernel configuration with a factory that reads IOptions
         services.AddTransient<Kernel>(sp =>
@@ -62,6 +63,7 @@ public static class SemanticKernelRegistration
             kernel.Plugins.AddFromObject(sp.GetRequiredService<TaxCalculationPlugin>(), "TaxCalculation");
             kernel.Plugins.AddFromObject(sp.GetRequiredService<TaxValidationPlugin>(), "TaxValidation");
             kernel.Plugins.AddFromObject(sp.GetRequiredService<ExchangeRatePlugin>(), "ExchangeRate");
+            kernel.Plugins.AddFromObject(sp.GetRequiredService<TaxReturnPlugin>(), "TaxReturn");
 
             return kernel;
         });

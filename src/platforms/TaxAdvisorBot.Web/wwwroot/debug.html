@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TaxAdvisorBot — Debug: Parsed Data</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #1a1a2e; color: #e0e0e0; }
+        .container { max-width: 1400px; margin: 0 auto; padding: 20px; }
+        h1 { color: #e94560; margin-bottom: 4px; }
+        .subtitle { color: #888; margin-bottom: 20px; font-size: 14px; }
+        .subtitle a { color: #4fc3f7; }
+        .toolbar { display: flex; gap: 8px; align-items: center; margin-bottom: 20px; flex-wrap: wrap; }
+        .toolbar select, .toolbar button { padding: 8px 14px; font-size: 14px; border: 1px solid #333; border-radius: 6px; background: #16213e; color: #e0e0e0; cursor: pointer; }
+        .toolbar button { background: #0f3460; border-color: #0f3460; }
+        .toolbar button:hover { background: #1a5276; }
+        .toolbar button.danger { background: #c0392b; border-color: #c0392b; }
+        .toolbar button.danger:hover { background: #e74c3c; }
+        .toolbar .spacer { flex: 1; }
+        .toolbar .status { font-size: 13px; color: #888; }
+
+        .panel { background: #16213e; border: 1px solid #1a3a5c; border-radius: 8px; padding: 16px; margin-bottom: 16px; }
+        .panel h2 { color: #4fc3f7; font-size: 16px; margin-bottom: 12px; border-bottom: 1px solid #1a3a5c; padding-bottom: 8px; }
+        .panel h3 { color: #e94560; font-size: 14px; margin: 12px 0 8px; }
+
+        .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 8px; }
+        .field { display: flex; justify-content: space-between; padding: 4px 8px; border-radius: 4px; font-size: 13px; }
+        .field:nth-child(odd) { background: rgba(255,255,255,0.03); }
+        .field .label { color: #888; }
+        .field .value { color: #e0e0e0; font-weight: 600; text-align: right; }
+        .field .value.zero { color: #555; }
+        .field .value.highlight { color: #2ecc71; }
+        .field .value.warn { color: #f39c12; }
+
+        table { width: 100%; border-collapse: collapse; font-size: 13px; }
+        th { text-align: left; padding: 8px; background: #0f3460; color: #4fc3f7; border-bottom: 2px solid #1a3a5c; position: sticky; top: 0; }
+        td { padding: 6px 8px; border-bottom: 1px solid #1a3a5c; }
+        tr:hover td { background: rgba(79,195,247,0.05); }
+        .exempt { color: #2ecc71; }
+        .taxable { color: #e94560; }
+        .tag { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 11px; font-weight: 600; }
+        .tag.rsu { background: #1565c0; color: white; }
+        .tag.espp { background: #6a1b9a; color: white; }
+        .tag.sale { background: #e65100; color: white; }
+        .tag.div { background: #00695c; color: white; }
+        .tag.tax { background: #b71c1c; color: white; }
+        .tag.exempt-tag { background: #1b5e20; color: white; }
+        .positive { color: #2ecc71; }
+        .negative { color: #e94560; }
+        .missing { color: #c0392b; font-style: italic; }
+
+        .empty-state { text-align: center; padding: 60px; color: #555; }
+        .empty-state .icon { font-size: 48px; margin-bottom: 12px; }
+
+        .json-toggle { font-size: 12px; color: #4fc3f7; cursor: pointer; float: right; }
+        .json-toggle:hover { text-decoration: underline; }
+        .json-view { display: none; background: #0d1b2a; padding: 12px; border-radius: 6px; margin-top: 8px; overflow-x: auto; max-height: 500px; overflow-y: auto; }
+        .json-view pre { font-size: 12px; color: #a0d2db; white-space: pre-wrap; word-break: break-all; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Debug: Parsed Data</h1>
+        <p class="subtitle"><a href="/">← Back to main</a> &nbsp;|&nbsp; Inspect data extracted from uploaded documents</p>
+
+        <div class="toolbar">
+            <select id="yearSelect"></select>
+            <button onclick="loadData()">Refresh</button>
+            <button class="danger" onclick="deleteData()">Delete Year</button>
+            <div class="spacer"></div>
+            <span class="status" id="statusText"></span>
+        </div>
+
+        <div id="content">
+            <div class="empty-state">
+                <div class="icon">📋</div>
+                <p>Loading tax return data...</p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentData = null;
+
+        async function init() {
+            const sel = document.getElementById('yearSelect');
+            try {
+                const res = await fetch('/api/taxreturns');
+                const list = await res.json();
+                if (list.length === 0) {
+                    sel.innerHTML = '<option>No data</option>';
+                    document.getElementById('content').innerHTML = `
+                        <div class="empty-state">
+                            <div class="icon">📭</div>
+                            <p>No tax returns found in the database.</p>
+                            <p style="margin-top:8px; font-size:13px; color:#666;">Upload documents in the <a href="/" style="color:#4fc3f7;">main chat</a> first.</p>
+                        </div>`;
+                    return;
+                }
+                sel.innerHTML = list.map(t =>
+                    `<option value="${t.taxYear}">${t.taxYear} — ${t.firstName || '?'} ${t.lastName || '?'} (${t.stockTransactionCount} txns)</option>`
+                ).join('');
+                loadData();
+            } catch (err) {
+                setStatus('Error: ' + err.message, true);
+            }
+        }
+
+        async function loadData() {
+            const year = document.getElementById('yearSelect').value;
+            if (!year || year === 'No data') return;
+            setStatus('Loading...');
+            try {
+                const res = await fetch(`/api/taxreturns/${year}`);
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                currentData = await res.json();
+                render(currentData);
+                setStatus(`Loaded: ${currentData.stockTransactions?.length || 0} transactions`);
+            } catch (err) {
+                setStatus('Error: ' + err.message, true);
+            }
+        }
+
+        async function deleteData() {
+            const year = document.getElementById('yearSelect').value;
+            if (!year || year === 'No data') return;
+            if (!confirm(`Delete all data for year ${year}? This cannot be undone.`)) return;
+            try {
+                const res = await fetch(`/api/taxreturns/${year}`, { method: 'DELETE' });
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                setStatus(`Deleted year ${year}`);
+                init();
+            } catch (err) {
+                setStatus('Error: ' + err.message, true);
+            }
+        }
+
+        function render(data) {
+            const html = [];
+
+            // Summary panel
+            html.push(`<div class="panel">
+                <h2>Tax Return Summary</h2>
+                <span class="json-toggle" onclick="toggleJson('summaryJson')">Show JSON</span>
+                <div class="grid">
+                    ${field('ID', data.id)}
+                    ${field('Tax Year', data.taxYear)}
+                    ${field('Status', data.status)}
+                    ${field('Name', (data.firstName || '—') + ' ' + (data.lastName || '—'))}
+                    ${field('Personal ID', data.personalIdNumber || '—')}
+                    ${field('Date of Birth', data.dateOfBirth || '—')}
+                    ${field('Tax Office', data.taxOfficeCode || '—')}
+                    ${field('Foreign Income', data.hasForeignIncome ? 'Yes (' + (data.foreignIncomeCurrency || '?') + ')' : 'No')}
+                </div>
+                <div class="json-view" id="summaryJson"><pre>${esc(JSON.stringify(data, null, 2))}</pre></div>
+            </div>`);
+
+            // Income sections
+            html.push(`<div class="panel">
+                <h2>Income Sections</h2>
+                <div class="grid">
+                    <div>
+                        <h3>§6 — Employment</h3>
+                        ${field('Gross Income', money(data.section6GrossIncome))}
+                        ${field('Social Insurance', money(data.section6SocialInsurance))}
+                        ${field('Health Insurance', money(data.section6HealthInsurance))}
+                        ${field('Tax Withheld', money(data.section6TaxWithheld))}
+                    </div>
+                    <div>
+                        <h3>§10 — Other Income</h3>
+                        ${field('Income', money(data.section10Income))}
+                        ${field('Expenses', money(data.section10Expenses))}
+                    </div>
+                    <div>
+                        <h3>§8 — Capital</h3>
+                        ${field('Income', money(data.section8Income))}
+                        ${field('Expenses', money(data.section8Expenses))}
+                    </div>
+                    <div>
+                        <h3>Totals</h3>
+                        ${field('Total Gross', money(data.totalGrossIncome), true)}
+                        ${field('Total Expenses', money(data.totalExpenses))}
+                        ${field('Taxable Base', money(data.taxableBase), true)}
+                    </div>
+                </div>
+            </div>`);
+
+            // Deductions & credits
+            html.push(`<div class="panel">
+                <h2>Deductions & Credits</h2>
+                <div class="grid">
+                    <div>
+                        <h3>§15 — Deductions</h3>
+                        ${field('Pension Fund', money(data.pensionFundContributions))}
+                        ${field('Life Insurance', money(data.lifeInsuranceContributions))}
+                        ${field('Mortgage Interest', money(data.mortgageInterestPaid))}
+                        ${field('Charitable', money(data.charitableDonations))}
+                        ${field('Trade Union', money(data.tradeUnionFees))}
+                        ${field('Total §15', money(data.totalNonTaxableDeductions), true)}
+                    </div>
+                    <div>
+                        <h3>§35ba — Credits</h3>
+                        ${field('Basic Taxpayer', money(data.basicTaxCredit))}
+                        ${field('Spouse', money(data.spouseTaxCredit))}
+                        ${field('Student', money(data.studentTaxCredit))}
+                        ${field('Total §35ba', money(data.totalTaxCredits), true)}
+                    </div>
+                    <div>
+                        <h3>§35c — Children</h3>
+                        ${field('Dependent Children', data.dependentChildrenCount)}
+                        ${field('Child Benefit', money(data.childTaxBenefit))}
+                    </div>
+                    <div>
+                        <h3>Foreign Tax</h3>
+                        ${field('Tax Paid Abroad', money(data.taxPaidAbroad))}
+                    </div>
+                </div>
+            </div>`);
+
+            // Stock transactions
+            const txns = data.stockTransactions || [];
+            html.push(`<div class="panel">
+                <h2>Stock Transactions (${txns.length})</h2>
+                <span class="json-toggle" onclick="toggleJson('txnJson')">Show JSON</span>`);
+
+            if (txns.length === 0) {
+                html.push('<p style="color:#555; padding:20px; text-align:center;">No stock transactions</p>');
+            } else {
+                // Group by type
+                const rsu = txns.filter(t => t.transactionType === 0 || t.transactionType === 'RsuVesting');
+                const espp = txns.filter(t => t.transactionType === 1 || t.transactionType === 'EsppDiscount');
+                const sales = txns.filter(t => t.transactionType === 2 || t.transactionType === 'ShareSale');
+                const divs = txns.filter(t => t.transactionType === 3 || t.transactionType === 'Dividend');
+                const taxW = txns.filter(t => t.transactionType === 4 || t.transactionType === 'TaxWithheld');
+                const other = txns.filter(t => ![0,1,2,3,4,'RsuVesting','EsppDiscount','ShareSale','Dividend','TaxWithheld'].includes(t.transactionType));
+
+                if (rsu.length > 0) {
+                    html.push(`<h3><span class="tag rsu">RSU</span> RSU Vesting Events (${rsu.length})</h3>`);
+                    html.push(txnTable(rsu, 'rsu'));
+                }
+                if (espp.length > 0) {
+                    html.push(`<h3><span class="tag espp">ESPP</span> ESPP Discount Events (${espp.length})</h3>`);
+                    html.push(txnTable(espp, 'espp'));
+                }
+                if (sales.length > 0) {
+                    html.push(`<h3><span class="tag sale">SALE</span> Share Sales (${sales.length})</h3>`);
+                    html.push(txnTable(sales, 'sale'));
+                }
+                if (divs.length > 0) {
+                    html.push(`<h3><span class="tag div">DIV</span> Dividends (${divs.length})</h3>`);
+                    html.push(txnTable(divs, 'dividend'));
+                }
+                if (taxW.length > 0) {
+                    html.push(`<h3><span class="tag tax">TAX</span> Tax Withheld Abroad (${taxW.length})</h3>`);
+                    html.push(txnTable(taxW, 'taxwithheld'));
+                }
+                if (other.length > 0) {
+                    html.push(`<h3>Other Transactions (${other.length})</h3>`);
+                    html.push(txnTable(other, 'other'));
+                }
+
+                // Totals
+                const totalRsuUsd = rsu.reduce((s, t) => s + (t.quantity * t.acquisitionPricePerShare), 0);
+                const totalRsuCzk = rsu.reduce((s, t) => s + (t.quantity * t.acquisitionPricePerShare * (t.exchangeRate || 0)), 0);
+                const totalEsppUsd = espp.reduce((s, t) => s + (t.quantity * (t.acquisitionPricePerShare - (t.esppPurchasePricePerShare || 0))), 0);
+                const totalEsppCzk = espp.reduce((s, t) => s + (t.quantity * (t.acquisitionPricePerShare - (t.esppPurchasePricePerShare || 0)) * (t.exchangeRate || 0)), 0);
+                const taxableSales = sales.filter(t => !t.isExemptFromTax);
+                const totalGainUsd = taxableSales.reduce((s, t) => s + ((t.salePricePerShare || 0) - t.acquisitionPricePerShare) * t.quantity, 0);
+                const totalGainCzk = taxableSales.reduce((s, t) => s + ((t.salePricePerShare || 0) - t.acquisitionPricePerShare) * t.quantity * (t.exchangeRate || 0), 0);
+                const totalDivUsd = divs.reduce((s, t) => s + (t.grossAmount || 0), 0);
+                const totalDivCzk = divs.reduce((s, t) => s + (t.grossAmount || 0) * (t.exchangeRate || 0), 0);
+                const totalTaxWUsd = taxW.reduce((s, t) => s + Math.abs(t.grossAmount || 0), 0);
+                const totalTaxWCzk = taxW.reduce((s, t) => s + Math.abs(t.grossAmount || 0) * (t.exchangeRate || 0), 0);
+
+                html.push(`<div style="margin-top:16px; padding:12px; background:#0d1b2a; border-radius:6px;">
+                    <h3 style="color:#4fc3f7;">Totals Summary</h3>
+                    <div class="grid">
+                        ${field('RSU Vesting Total (USD)', '$' + fmt(totalRsuUsd))}
+                        ${field('RSU Vesting Total (CZK)', fmt(totalRsuCzk) + ' Kč')}
+                        ${field('ESPP Discount Total (USD)', '$' + fmt(totalEsppUsd))}
+                        ${field('ESPP Discount Total (CZK)', fmt(totalEsppCzk) + ' Kč')}
+                        ${field('Taxable Sale Gain (USD)', '$' + fmt(totalGainUsd), false, totalGainUsd >= 0)}
+                        ${field('Taxable Sale Gain (CZK)', fmt(totalGainCzk) + ' Kč', false, totalGainCzk >= 0)}
+                        ${field('Dividends (USD)', '$' + fmt(totalDivUsd))}
+                        ${field('Dividends (CZK)', fmt(totalDivCzk) + ' Kč')}
+                        ${field('Tax Withheld (USD)', '$' + fmt(totalTaxWUsd))}
+                        ${field('Tax Withheld (CZK)', fmt(totalTaxWCzk) + ' Kč')}
+                        ${field('Exempt Sales', sales.filter(t => t.isExemptFromTax).length + ' of ' + sales.length)}
+                        ${field('Missing Exchange Rates', txns.filter(t => !t.exchangeRate).length + ' of ' + txns.length, false, false, txns.some(t => !t.exchangeRate))}
+                    </div>
+                </div>`);
+            }
+
+            html.push(`<div class="json-view" id="txnJson"><pre>${esc(JSON.stringify(txns, null, 2))}</pre></div>`);
+            html.push('</div>');
+
+            document.getElementById('content').innerHTML = html.join('');
+        }
+
+        function txnTable(txns, type) {
+            const showSale = type === 'sale';
+            const showEspp = type === 'espp';
+            const showAmount = type === 'dividend' || type === 'taxwithheld';
+
+            if (showAmount) {
+                // Simple table for dividends/tax withheld — just date, ticker, amount, rate, CZK, broker
+                let cols = '<tr><th>#</th><th>Date</th><th>Ticker</th><th>Amount (USD)</th><th>Rate</th><th>Amount (CZK)</th><th>Broker</th></tr>';
+                let rows = '';
+                txns.forEach((t, i) => {
+                    const rate = t.exchangeRate;
+                    const hasRate = rate != null && rate > 0;
+                    const amount = t.grossAmount || 0;
+                    rows += '<tr>';
+                    rows += `<td>${i + 1}</td>`;
+                    rows += `<td>${t.acquisitionDate || '—'}</td>`;
+                    rows += `<td><strong>${esc(t.ticker)}</strong></td>`;
+                    rows += `<td>$${fmt(amount)}</td>`;
+                    rows += `<td>${hasRate ? fmt(rate) : '<span class="missing">missing</span>'}</td>`;
+                    rows += `<td>${hasRate ? fmt(amount * rate) + ' Kč' : '<span class="missing">—</span>'}</td>`;
+                    rows += `<td>${esc(t.brokerName || '—')}</td>`;
+                    rows += '</tr>';
+                });
+                return `<div style="overflow-x:auto;"><table>${cols}${rows}</table></div>`;
+            }
+
+            let cols = '<tr><th>#</th><th>Date</th><th>Ticker</th><th>Qty</th><th>Price/Share</th>';
+            if (showEspp) cols += '<th>ESPP Price</th><th>Discount/Share</th>';
+            if (showSale) cols += '<th>Sale Date</th><th>Sale Price</th><th>Gain/Loss</th><th>Exempt?</th>';
+            cols += '<th>Total (USD)</th><th>Rate</th><th>Total (CZK)</th><th>Broker</th></tr>';
+
+            let rows = '';
+            txns.forEach((t, i) => {
+                const rate = t.exchangeRate;
+                const hasRate = rate != null && rate > 0;
+                let totalUsd, totalCzk;
+
+                if (showSale) {
+                    totalUsd = ((t.salePricePerShare || 0) - t.acquisitionPricePerShare) * t.quantity;
+                    totalCzk = hasRate ? totalUsd * rate : null;
+                } else if (showEspp) {
+                    totalUsd = t.quantity * (t.acquisitionPricePerShare - (t.esppPurchasePricePerShare || 0));
+                    totalCzk = hasRate ? totalUsd * rate : null;
+                } else {
+                    totalUsd = t.quantity * t.acquisitionPricePerShare;
+                    totalCzk = hasRate ? totalUsd * rate : null;
+                }
+
+                rows += '<tr>';
+                rows += `<td>${i + 1}</td>`;
+                rows += `<td>${t.acquisitionDate || '—'}</td>`;
+                rows += `<td><strong>${esc(t.ticker)}</strong></td>`;
+                rows += `<td>${fmt(t.quantity)}</td>`;
+                rows += `<td>$${fmt(t.acquisitionPricePerShare)}</td>`;
+                if (showEspp) {
+                    rows += `<td>${t.esppPurchasePricePerShare != null ? '$' + fmt(t.esppPurchasePricePerShare) : '<span class="missing">missing</span>'}</td>`;
+                    rows += `<td>$${fmt(t.acquisitionPricePerShare - (t.esppPurchasePricePerShare || 0))}</td>`;
+                }
+                if (showSale) {
+                    rows += `<td>${t.saleDate || '<span class="missing">missing</span>'}</td>`;
+                    rows += `<td>${t.salePricePerShare != null ? '$' + fmt(t.salePricePerShare) : '<span class="missing">missing</span>'}</td>`;
+                    const gain = ((t.salePricePerShare || 0) - t.acquisitionPricePerShare) * t.quantity;
+                    rows += `<td class="${gain >= 0 ? 'positive' : 'negative'}">$${fmt(gain)}</td>`;
+                    rows += `<td>${t.isExemptFromTax ? '<span class="exempt">✓ Exempt</span>' : '<span class="taxable">Taxable</span>'}</td>`;
+                }
+                rows += `<td>$${fmt(totalUsd)}</td>`;
+                rows += `<td>${hasRate ? fmt(rate) : '<span class="missing">missing</span>'}</td>`;
+                rows += `<td>${totalCzk != null ? fmt(totalCzk) + ' Kč' : '<span class="missing">—</span>'}</td>`;
+                rows += `<td>${esc(t.brokerName || '—')}</td>`;
+                rows += '</tr>';
+            });
+
+            return `<div style="overflow-x:auto;"><table>${cols}${rows}</table></div>`;
+        }
+
+        function field(label, value, highlight = false, positive = true, warn = false) {
+            let cls = 'value';
+            if (value === 0 || value === '0' || value === '0.00' || value === '$0.00' || value === '0.000 Kč') cls += ' zero';
+            else if (highlight) cls += ' highlight';
+            if (warn) cls += ' warn';
+            return `<div class="field"><span class="label">${label}</span><span class="${cls}">${value}</span></div>`;
+        }
+
+        function money(v) { return v != null ? fmt(v) + ' CZK' : '—'; }
+        function fmt(n) { return n != null ? Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—'; }
+        function esc(t) { const d = document.createElement('div'); d.textContent = t; return d.innerHTML; }
+        function setStatus(msg, isError = false) {
+            const el = document.getElementById('statusText');
+            el.textContent = msg;
+            el.style.color = isError ? '#e94560' : '#888';
+        }
+        function toggleJson(id) {
+            const el = document.getElementById(id);
+            el.style.display = el.style.display === 'block' ? 'none' : 'block';
+        }
+
+        init();
+    </script>
+</body>
+</html>

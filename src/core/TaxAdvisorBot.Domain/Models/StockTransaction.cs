@@ -44,6 +44,9 @@ public sealed record StockTransaction
     /// <summary>Tax already withheld abroad on this transaction.</summary>
     public decimal TaxWithheldAbroad { get; set; }
 
+    /// <summary>Gross amount for dividends or tax withheld (where quantity × price doesn't apply).</summary>
+    public decimal? GrossAmount { get; init; }
+
     // ── Computed properties ──
 
     /// <summary>

@@ -3,6 +3,8 @@ using Microsoft.Extensions.Options;
 using TaxAdvisorBot.Application;
 using TaxAdvisorBot.Application.Interfaces;
 using TaxAdvisorBot.Application.Options;
+using TaxAdvisorBot.Domain.Enums;
+using TaxAdvisorBot.Domain.Models;
 using TaxAdvisorBot.Infrastructure;
 using TaxAdvisorBot.Infrastructure.Search;
 using TaxAdvisorBot.Web.Hubs;
@@ -172,6 +174,121 @@ app.MapGet("/api/ingest/{jobId}", (string jobId) =>
 
 app.MapFallbackToFile("index.html");
 
+// Output generation
+app.MapGet("/api/output/table", async (int? year, ITaxReturnOutputService output, ITaxReturnRepository repo, CancellationToken ct) =>
+{
+    var taxYear = year ?? DateTime.Now.Year - 1;
+    var taxReturn = await repo.GetByYearAsync(taxYear, ct);
+    if (taxReturn is null) return Results.NotFound(new { error = $"No tax return for year {taxYear}" });
+    var pdf = await output.GenerateCalculationTableAsync(taxReturn, ct);
+    return Results.File(pdf, "application/pdf", $"stock-calculation-{taxYear}.pdf");
+});
+
+// Seed sample tax return for testing
+app.MapPost("/api/test/seed", async (int? year, ITaxReturnRepository repo, CancellationToken ct) =>
+{
+    var taxYear = year ?? 2025;
+    var taxReturn = new TaxReturn
+    {
+        TaxYear = taxYear,
+        FirstName = "Jan",
+        LastName = "Novák",
+        PersonalIdNumber = "8503151234",
+        DateOfBirth = new DateOnly(1985, 3, 15),
+        Section6GrossIncome = 1_200_000m,
+        Section6SocialInsurance = 396_000m,
+        Section6HealthInsurance = 162_000m,
+        Section6TaxWithheld = 180_000m,
+        HasForeignIncome = true,
+        ForeignIncomeCurrency = "USD",
+        PensionFundContributions = 24_000m,
+        MortgageInterestPaid = 80_000m,
+        BasicTaxCredit = 30_840m,
+        DependentChildrenCount = 2,
+        ChildTaxBenefit = 30_408m,
+        StockTransactions =
+        [
+            new StockTransaction
+            {
+                TransactionType = StockTransactionType.RsuVesting,
+                Ticker = "MSFT",
+                Quantity = 50,
+                AcquisitionDate = new DateOnly(taxYear, 3, 15),
+                AcquisitionPricePerShare = 420.50m,
+                CurrencyCode = "USD",
+                ExchangeRate = 23.15m,
+                BrokerName = "Fidelity",
+            },
+            new StockTransaction
+            {
+                TransactionType = StockTransactionType.RsuVesting,
+                Ticker = "MSFT",
+                Quantity = 50,
+                AcquisitionDate = new DateOnly(taxYear, 9, 15),
+                AcquisitionPricePerShare = 445.00m,
+                CurrencyCode = "USD",
+                ExchangeRate = 22.80m,
+                BrokerName = "Fidelity",
+            },
+            new StockTransaction
+            {
+                TransactionType = StockTransactionType.EsppDiscount,
+                Ticker = "MSFT",
+                Quantity = 30,
+                AcquisitionDate = new DateOnly(taxYear, 6, 30),
+                AcquisitionPricePerShare = 430.00m,
+                EsppPurchasePricePerShare = 387.00m,
+                CurrencyCode = "USD",
+                ExchangeRate = 23.00m,
+                BrokerName = "Fidelity",
+            },
+            new StockTransaction
+            {
+                TransactionType = StockTransactionType.ShareSale,
+                Ticker = "MSFT",
+                Quantity = 20,
+                AcquisitionDate = new DateOnly(taxYear - 4, 3, 15),
+                SaleDate = new DateOnly(taxYear, 11, 10),
+                AcquisitionPricePerShare = 280.00m,
+                SalePricePerShare = 450.00m,
+                CurrencyCode = "USD",
+                ExchangeRate = 23.30m,
+                BrokerName = "Fidelity",
+            },
+            new StockTransaction
+            {
+                TransactionType = StockTransactionType.ShareSale,
+                Ticker = "MSFT",
+                Quantity = 10,
+                AcquisitionDate = new DateOnly(taxYear - 1, 9, 15),
+                SaleDate = new DateOnly(taxYear, 11, 10),
+                AcquisitionPricePerShare = 400.00m,
+                SalePricePerShare = 450.00m,
+                CurrencyCode = "USD",
+                ExchangeRate = 23.30m,
+                BrokerName = "Fidelity",
+            },
+        ]
+    };
+
+    await repo.SaveAsync(taxReturn, ct);
+    return Results.Ok(new
+    {
+        message = $"Seeded tax return for {taxYear}",
+        transactions = taxReturn.StockTransactions.Count,
+        grossIncome = taxReturn.TotalGrossIncome
+    });
+});
+
+app.MapGet("/api/output/all", async (int? year, ITaxReturnOutputService output, ITaxReturnRepository repo, CancellationToken ct) =>
+{
+    var taxYear = year ?? DateTime.Now.Year - 1;
+    var taxReturn = await repo.GetByYearAsync(taxYear, ct);
+    if (taxReturn is null) return Results.NotFound(new { error = $"No tax return for year {taxYear}" });
+    var zip = await output.GenerateAllAsync(taxReturn, ct);
+    return Results.File(zip, "application/zip", $"tax-return-{taxYear}.zip");
+});
+
 // Batch ingestion: ingest all configured sources via Azure OpenAI Batch API
 app.MapPost("/api/batch-ingest", (BatchIngestRequest request, BatchLegalIngestionService batchService) =>
 {
@@ -185,6 +302,35 @@ app.MapPost("/api/batch-ingest", (BatchIngestRequest request, BatchLegalIngestio
 
 app.MapGet("/api/batch-ingest/status", (BatchLegalIngestionService batchService) =>
     Results.Ok(batchService.Status));
+
+// Debug: list all tax returns (summary)
+app.MapGet("/api/taxreturns", async (ITaxReturnRepository repo, CancellationToken ct) =>
+{
+    var all = await repo.GetAllAsync(ct);
+    return Results.Ok(all.Select(t => new
+    {
+        t.Id, t.TaxYear, t.Status, t.FirstName, t.LastName,
+        StockTransactionCount = t.StockTransactions.Count,
+        t.TotalGrossIncome
+    }));
+});
+
+// Debug: full tax return by year (with all transactions)
+app.MapGet("/api/taxreturns/{year:int}", async (int year, ITaxReturnRepository repo, CancellationToken ct) =>
+{
+    var taxReturn = await repo.GetByYearAsync(year, ct);
+    if (taxReturn is null) return Results.NotFound(new { error = $"No tax return for year {year}" });
+    return Results.Ok(taxReturn);
+});
+
+// Debug: delete tax return by year
+app.MapDelete("/api/taxreturns/{year:int}", async (int year, ITaxReturnRepository repo, CancellationToken ct) =>
+{
+    var taxReturn = await repo.GetByYearAsync(year, ct);
+    if (taxReturn is null) return Results.NotFound(new { error = $"No tax return for year {year}" });
+    await repo.DeleteAsync(taxReturn.Id, ct);
+    return Results.Ok(new { message = $"Deleted tax return for year {year}" });
+});
 
 app.Run();
 

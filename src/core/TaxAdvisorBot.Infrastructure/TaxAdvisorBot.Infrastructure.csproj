@@ -16,6 +16,7 @@
     <PackageReference Include="Microsoft.SemanticKernel.Connectors.AzureOpenAI" />
     <PackageReference Include="Microsoft.SemanticKernel.Connectors.Qdrant" />
     <PackageReference Include="Qdrant.Client" />
+    <PackageReference Include="QuestPDF" />
     <PackageReference Include="UglyToad.PdfPig" />
   </ItemGroup>
 

@@ -1,3 +1,4 @@
+using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -15,6 +16,7 @@ using TaxAdvisorBot.Infrastructure.AI;
 using TaxAdvisorBot.Infrastructure.Documents;
 using TaxAdvisorBot.Infrastructure.ExchangeRates;
 using TaxAdvisorBot.Infrastructure.Messaging;
+using TaxAdvisorBot.Infrastructure.Output;
 using TaxAdvisorBot.Infrastructure.Persistence;
 using TaxAdvisorBot.Infrastructure.Search;
 
@@ -116,9 +118,15 @@ public static class DependencyInjection
         // WhiteboardProvider for short-term conversation memory
         builder.Services.AddSingleton<WhiteboardProvider>(sp =>
         {
-            var kernel = sp.GetRequiredService<Kernel>();
-            var chatClient = kernel.GetRequiredService<IChatCompletionService>() as Microsoft.Extensions.AI.IChatClient
-                ?? throw new InvalidOperationException("IChatCompletionService does not implement IChatClient");
+            var options = sp.GetRequiredService<IOptions<AzureAIOptions>>().Value;
+
+            // Create a dedicated IChatClient for the whiteboard (uses fast-chat model)
+            var azureClient = new Azure.AI.OpenAI.AzureOpenAIClient(
+                new Uri(options.Endpoint),
+                new System.ClientModel.ApiKeyCredential(options.ApiKey));
+            var chatClient = azureClient.GetChatClient(options.FastChatDeploymentName)
+                .AsIChatClient();
+
             return new WhiteboardProvider(chatClient, options: new WhiteboardProviderOptions
             {
                 MaxWhiteboardMessages = 20,
@@ -137,6 +145,10 @@ public static class DependencyInjection
 
         // Batch legal ingestion (all sources via Azure OpenAI Batch API)
         builder.Services.AddHttpClient<BatchLegalIngestionService>();
+
+        // Output generation (PDF calculation table, XML, PDF declaration)
+        builder.Services.AddSingleton<StockCalculationTableGenerator>();
+        builder.Services.AddSingleton<ITaxReturnOutputService, TaxReturnOutputService>();
 
         // Async job queue + processor
         builder.Services.AddSingleton<InMemoryJobQueue>();

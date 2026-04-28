@@ -53,7 +53,20 @@
         .status.loading { background: #e3f2fd; color: #1565c0; }
         .status.error { background: #ffebee; color: #c62828; }
         .empty { text-align: center; padding: 40px; color: #999; }
+
+        /* File pills */
+        .file-pill { display:flex; align-items:center; gap:8px; padding:6px 10px; margin:3px 0; background:#f5f5f5; border-radius:20px; font-size:12px; border:1px solid #e0e0e0; }
+        .file-pill .icon { font-size:16px; flex-shrink:0; }
+        .file-pill .name { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:300px; }
+        .file-pill .status { flex-shrink:0; font-size:14px; }
+        .file-pill.processing { background:#e3f2fd; border-color:#90caf9; }
+        .file-pill.success { background:#e8f5e9; border-color:#a5d6a7; }
+        .file-pill.error { background:#ffebee; border-color:#ef9a9a; }
+
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .spinner { display:inline-block; width:14px; height:14px; border:2px solid #90caf9; border-top-color:#1565c0; border-radius:50%; animation: spin 0.8s linear infinite; }
     </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/8.0.7/signalr.min.js"></script>
 </head>
 <body>
     <div class="container">
@@ -126,6 +139,23 @@
                 <input type="file" id="fileInput" style="display:none" accept=".pdf,.png,.jpg,.jpeg,.csv,.xls,.xlsx" multiple onchange="uploadFiles(this.files)">
             </div>
             <div id="uploadStatus" style="font-size:12px; margin-top:4px;"></div>
+        </div>
+
+        <!-- Output Generation -->
+        <div style="background:#e8f5e9; border:1px solid #4caf50; border-radius:8px; padding:16px; margin-bottom:24px;">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+                <div>
+                    <h3 style="color:#2e7d32;">Generate Output</h3>
+                    <p style="font-size:13px; color:#388e3c;">Download tax filing artifacts for a completed tax return.</p>
+                </div>
+                <div style="display:flex; gap:8px; align-items:center;">
+                    <label style="font-size:13px;">Year:</label>
+                    <input type="number" id="outputYear" value="2025" min="2020" max="2030" style="width:70px; padding:4px; border:1px solid #4caf50; border-radius:4px;">
+                    <a href="#" onclick="downloadOutput('table'); return false;" style="padding:6px 14px; background:#4caf50; color:white; border-radius:4px; text-decoration:none; font-size:13px;">📊 Calculation Table</a>
+                    <a href="#" onclick="downloadOutput('all'); return false;" style="padding:6px 14px; background:#2e7d32; color:white; border-radius:4px; text-decoration:none; font-size:13px;">📦 Download All (ZIP)</a>
+                </div>
+            </div>
+            <div id="outputStatus" style="font-size:12px; margin-top:6px;"></div>
         </div>
 
         <div class="search-box">
@@ -210,6 +240,37 @@
             }
         }
 
+        const fileIcons = {
+            'application/pdf': '📄',
+            'image/png': '🖼️', 'image/jpeg': '🖼️',
+            'text/csv': '📊',
+            'application/vnd.ms-excel': '📊',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': '📊',
+        };
+
+        // SignalR connection for file processing updates
+        const hub = new signalR.HubConnectionBuilder().withUrl('/hubs/chat').build();
+        hub.on('ReceiveProgress', (sessionId, update) => {
+            // sessionId = filename, find the matching pill
+            const pills = document.querySelectorAll('.file-pill');
+            for (const pill of pills) {
+                const nameEl = pill.querySelector('.name');
+                if (nameEl && nameEl.textContent === sessionId) {
+                    if (update.stepName === 'Done') {
+                        pill.className = 'file-pill success';
+                        pill.querySelector('.status').innerHTML = '✅';
+                        pill.title = update.message || 'Done';
+                    } else if (update.stepName === 'Failed') {
+                        pill.className = 'file-pill error';
+                        pill.querySelector('.status').innerHTML = '❌';
+                        pill.title = update.message || 'Failed';
+                    }
+                    break;
+                }
+            }
+        });
+        hub.start().catch(err => console.warn('SignalR failed:', err));
+
         function handleDrop(event) {
             event.preventDefault();
             event.target.style.borderColor = '#ccc';
@@ -219,32 +280,66 @@
 
         async function uploadFiles(fileList) {
             if (!fileList || fileList.length === 0) return;
-            const statusEl = document.getElementById('uploadStatus');
-            statusEl.style.color = '#1565c0';
-            statusEl.textContent = `Uploading ${fileList.length} file(s)...`;
+
+            const messagesDiv = document.getElementById('chatMessages');
+            if (!chatSessionId) { messagesDiv.innerHTML = ''; chatSessionId = 'upload'; }
+
+            // Create a container for file pills
+            const container = document.createElement('div');
+            container.style.marginBottom = '8px';
+
+            const pills = {};
+            for (const file of fileList) {
+                const icon = fileIcons[file.type] || '📎';
+                const pill = document.createElement('div');
+                pill.className = 'file-pill processing';
+                pill.innerHTML = `<span class="icon">${icon}</span><span class="name">${esc(file.name)}</span><span class="status"><span class="spinner"></span></span>`;
+                container.appendChild(pill);
+                pills[file.name] = pill;
+            }
+
+            messagesDiv.appendChild(container);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+
+            document.getElementById('uploadStatus').textContent = '';
 
             try {
                 const formData = new FormData();
-                for (const file of fileList) {
-                    formData.append('file', file);
-                }
+                for (const file of fileList) formData.append('file', file);
 
                 const res = await fetch('/api/documents/upload', { method: 'POST', body: formData });
-                if (!res.ok) {
-                    const err = await res.json();
-                    throw new Error(err.error || `HTTP ${res.status}`);
-                }
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
                 const data = await res.json();
-                const msgs = [];
-                if (data.uploaded.length > 0)
-                    msgs.push(`${data.uploaded.length} file(s) queued`);
-                if (data.errors.length > 0)
-                    msgs.push(`${data.errors.length} failed: ${data.errors.map(e => e.error).join(', ')}`);
-                statusEl.style.color = data.errors.length > 0 ? '#e65100' : '#2e7d32';
-                statusEl.textContent = msgs.join(' | ');
+
+                // Mark upload-level errors immediately
+                for (const err of (data.errors || [])) {
+                    const pill = pills[err.fileName];
+                    if (pill) {
+                        pill.className = 'file-pill error';
+                        pill.querySelector('.status').innerHTML = '❌';
+                        pill.title = err.error;
+                    }
+                }
+
+                // Successfully uploaded files keep spinning until SignalR says done
+                // Set a timeout fallback — if no SignalR update in 60s, mark as done
+                for (const up of (data.uploaded || [])) {
+                    const pill = pills[up.fileName];
+                    if (pill) {
+                        setTimeout(() => {
+                            if (pill.classList.contains('processing')) {
+                                pill.className = 'file-pill success';
+                                pill.querySelector('.status').innerHTML = '✅';
+                            }
+                        }, 60000);
+                    }
+                }
             } catch (err) {
-                statusEl.style.color = '#c62828';
-                statusEl.textContent = `Upload failed: ${err.message}`;
+                // Mark all as failed
+                for (const pill of Object.values(pills)) {
+                    pill.className = 'file-pill error';
+                    pill.querySelector('.status').innerHTML = '❌';
+                }
             }
         }
 
@@ -486,6 +581,37 @@
                 `).join('');
             } catch (err) {
                 statusEl.className = 'status error';
+                statusEl.textContent = `Error: ${err.message}`;
+            }
+        }
+
+        async function downloadOutput(type) {
+            const year = document.getElementById('outputYear').value;
+            const statusEl = document.getElementById('outputStatus');
+            statusEl.style.color = '#1565c0';
+            statusEl.textContent = 'Generating...';
+
+            try {
+                const res = await fetch(`/api/output/${type}?year=${year}`);
+                if (!res.ok) {
+                    const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+                    throw new Error(err.error || `HTTP ${res.status}`);
+                }
+
+                const blob = await res.blob();
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = res.headers.get('content-disposition')?.split('filename=')[1]?.replace(/"/g, '') || `output.${type === 'all' ? 'zip' : 'pdf'}`;
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                URL.revokeObjectURL(url);
+
+                statusEl.style.color = '#2e7d32';
+                statusEl.textContent = 'Downloaded!';
+            } catch (err) {
+                statusEl.style.color = '#c62828';
                 statusEl.textContent = `Error: ${err.message}`;
             }
         }
