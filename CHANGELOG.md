@@ -71,8 +71,28 @@
 - `copilot-instructions.md` with full project conventions
 - README with Azure AI setup, model deployment guide, user-secrets commands
 
+### Task 007 — Async Job Queue & Notification Service
+- `InMemoryJobQueue` using `System.Threading.Channels` with typed `JobEnvelope`
+- `JobProcessorService` (`BackgroundService`) with `IJobHandler<T>` dispatch via reflection
+- Scoped per job for fresh DI instances
+- 4 unit tests (enqueue/dequeue, blocking, cancellation, ordering)
+
+### Task 008 — Web Platform: SignalR Chat Hub & File Upload
+- `ChatHub` (`/hubs/chat`) with `IAsyncEnumerable<string>` streaming via `SendMessage`
+- `SignalRNotificationService : INotificationService` — broadcasts progress/completion via SignalR
+- Multi-file upload endpoint (`POST /api/documents/upload`) — validates type/size per file, enqueues each via `IJobQueue`
+- File drop zone in web UI with drag-and-drop + click-to-upload (multiple files)
+- SSE streaming chat endpoint kept as fallback
+
+### Task 011 — WhiteboardProvider & Agent Memory
+- `WhiteboardProvider` integrated into `TaxAdvisorAgentService`
+- `MaxWhiteboardMessages = 20`, custom `ContextPrompt` for tax-specific facts
+- Uses `IChatClient` from Kernel's chat completion service
+- Both `TextSearchProvider` and `WhiteboardProvider` are required (non-optional) dependencies
+- Agent retains key facts (income, deductions, children) across conversation turns
+
 ## Test Summary
-- **91 tests total**, all passing
+- **95 tests total**, all passing
   - Domain: 37 (models, computed properties, 3-year exemption)
   - Application: 13 (options validation)
-  - Infrastructure: 41 (tax plugins, exchange rates)
+  - Infrastructure: 45 (tax plugins, exchange rates, job queue)

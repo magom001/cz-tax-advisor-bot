@@ -12,6 +12,7 @@ using Qdrant.Client;
 using TaxAdvisorBot.Application.Interfaces;
 using TaxAdvisorBot.Application.Options;
 using TaxAdvisorBot.Infrastructure.AI;
+using TaxAdvisorBot.Infrastructure.Documents;
 using TaxAdvisorBot.Infrastructure.ExchangeRates;
 using TaxAdvisorBot.Infrastructure.Messaging;
 using TaxAdvisorBot.Infrastructure.Persistence;
@@ -141,6 +142,9 @@ public static class DependencyInjection
         builder.Services.AddSingleton<InMemoryJobQueue>();
         builder.Services.AddSingleton<IJobQueue>(sp => sp.GetRequiredService<InMemoryJobQueue>());
         builder.Services.AddHostedService<JobProcessorService>();
+
+        // Job handlers
+        builder.Services.AddScoped<IJobHandler<DocumentUploadJob>, DocumentExtractionJobHandler>();
 
         return builder;
     }

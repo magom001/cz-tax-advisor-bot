@@ -191,7 +191,6 @@ app.Run();
 record IngestRequest(string Url, int Year);
 record BatchIngestRequest(int Year);
 record UniformRateRequest(int Year, string CurrencyCode, decimal Rate);
-record DocumentUploadJob(string FileName, string ContentType, byte[] Data);
 
 class IngestionJob(string url)
 {
