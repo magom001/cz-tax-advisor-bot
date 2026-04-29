@@ -148,6 +148,7 @@ public static class DependencyInjection
 
         // Output generation (PDF calculation table, XML, PDF declaration)
         builder.Services.AddSingleton<StockCalculationTableGenerator>();
+        builder.Services.AddSingleton<PdfTaxDeclarationGenerator>();
         builder.Services.AddSingleton<ITaxReturnOutputService, TaxReturnOutputService>();
 
         // Async job queue + processor

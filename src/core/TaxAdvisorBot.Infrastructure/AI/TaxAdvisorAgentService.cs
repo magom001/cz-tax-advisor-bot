@@ -78,7 +78,7 @@ public sealed class TaxAdvisorAgentService : IConversationService
         var agentThread = new ChatHistoryAgentThread(chatHistory);
 
         // Attach AI context providers based on agent type
-        if (route is AgentRoute.Triage or AgentRoute.LegalAuditor)
+        if (route is AgentRoute.Triage or AgentRoute.LegalAuditor or AgentRoute.PersonalFinance)
             agentThread.AIContextProviders.Add(_ragProvider);
 
         agentThread.AIContextProviders.Add(_whiteboardProvider);
@@ -149,6 +149,19 @@ public sealed class TaxAdvisorAgentService : IConversationService
                         FunctionChoiceBehavior = FunctionChoiceBehavior.Auto()
                     })
             },
+            AgentRoute.PersonalFinance => new ChatCompletionAgent
+            {
+                Name = "PersonalFinance",
+                Description = "Personal finance specialist — deductions (§15), credits (§35ba/§35c), employment income (§6), personal data",
+                Instructions = AgentDefinitions.PersonalFinanceInstructions,
+                Kernel = CreateKernelForRoute(route),
+                UseImmutableKernel = true,
+                Arguments = new KernelArguments(
+                    new OpenAIPromptExecutionSettings
+                    {
+                        FunctionChoiceBehavior = FunctionChoiceBehavior.Auto()
+                    })
+            },
             _ => new ChatCompletionAgent
             {
                 Name = "Triage",
@@ -188,6 +201,13 @@ public sealed class TaxAdvisorAgentService : IConversationService
 
             case AgentRoute.LegalAuditor:
                 // Legal auditor: no plugins — uses RAG via TextSearchProvider on the thread
+                break;
+
+            case AgentRoute.PersonalFinance:
+                // Personal finance needs: TaxReturn, TaxCalculation (deductions/credits), TaxValidation
+                kernel.Plugins.Add(_kernel.Plugins["TaxReturn"]);
+                kernel.Plugins.Add(_kernel.Plugins["TaxCalculation"]);
+                kernel.Plugins.Add(_kernel.Plugins["TaxValidation"]);
                 break;
 
             case AgentRoute.Triage:

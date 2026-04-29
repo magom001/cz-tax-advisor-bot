@@ -78,8 +78,23 @@ public sealed class DocumentExtractionJobHandler : IJobHandler<DocumentUploadJob
         await _notificationService.SendProgressAsync(job.FileName,
             new ProgressUpdate("Saving", 80, $"Extracted {result.TransactionCount} items from {job.FileName}"), cancellationToken);
 
-        // Save to repository
+        // Save structured data to repository
         await ApplyExtractionResultAsync(result, cancellationToken);
+
+        // If free-form, run the analysis agent for deduction eligibility
+        if (result.IsFreeForm && !string.IsNullOrWhiteSpace(result.RawContent))
+        {
+            await _notificationService.SendProgressAsync(job.FileName,
+                new ProgressUpdate("Analyzing", 90, "Analyzing free-form content for tax relevance..."), cancellationToken);
+
+            var analysis = await AnalyzeFreeFormContentAsync(result.RawContent, cancellationToken);
+
+            await _notificationService.SendProgressAsync(job.FileName,
+                new ProgressUpdate("Done", 100, analysis), cancellationToken);
+
+            _logger.LogInformation("Document {FileName} (FreeForm) analyzed: {Analysis}", job.FileName, analysis);
+            return;
+        }
 
         await _notificationService.SendProgressAsync(job.FileName,
             new ProgressUpdate("Done", 100, $"Processed {job.FileName}: {result.Summary}"), cancellationToken);
@@ -213,7 +228,71 @@ public sealed class DocumentExtractionJobHandler : IJobHandler<DocumentUploadJob
             if (result.Deductions.Donations > 0) taxReturn.CharitableDonations = result.Deductions.Donations;
         }
 
+        // Apply personal data
+        if (result.PersonalData is not null)
+        {
+            if (!string.IsNullOrWhiteSpace(result.PersonalData.FirstName))
+                taxReturn.FirstName = result.PersonalData.FirstName;
+            if (!string.IsNullOrWhiteSpace(result.PersonalData.LastName))
+                taxReturn.LastName = result.PersonalData.LastName;
+            if (DateOnly.TryParse(result.PersonalData.DateOfBirth, out var dob))
+                taxReturn.DateOfBirth = dob;
+            if (!string.IsNullOrWhiteSpace(result.PersonalData.PersonalIdNumber))
+                taxReturn.PersonalIdNumber = result.PersonalData.PersonalIdNumber;
+            if (!string.IsNullOrWhiteSpace(result.PersonalData.TaxOfficeCode))
+                taxReturn.TaxOfficeCode = result.PersonalData.TaxOfficeCode;
+            if (result.PersonalData.DependentChildrenCount is > 0)
+                taxReturn.DependentChildrenCount = result.PersonalData.DependentChildrenCount.Value;
+            if (result.PersonalData.SpouseIncome is not null && result.PersonalData.SpouseIncome < 68_000m)
+                taxReturn.SpouseTaxCredit = 24_840m; // spouse credit eligible
+        }
+
         await _taxReturnRepo.SaveAsync(taxReturn, ct);
+    }
+
+    private const string FreeFormAnalysisPrompt = """
+        You are a Czech tax advisor analyzing a free-form document submitted by a taxpayer.
+        The document contains personal information, financial data, or other details relevant to their tax filing.
+        
+        Based on the document content, analyze and respond with:
+        1. What personal data was found (name, rodné číslo, dependents, spouse)
+        2. What deductions might be eligible based on the information (§15):
+           - Pension fund contributions (max 24,000 CZK deductible)
+           - Life insurance (max 24,000 CZK deductible)
+           - Mortgage interest (max 150,000 CZK deductible)
+           - Charitable donations (min 2% of tax base or 1,000 CZK, max 15%)
+        3. What tax credits might apply (§35ba/§35c):
+           - Spouse credit: 24,840 CZK if spouse income < 68,000 CZK/year
+           - Child benefit: 15,204 / 22,320 / 27,840 CZK per child (1st/2nd/3rd+)
+        4. What additional documents the taxpayer should provide
+        
+        Keep the response concise and actionable. Use the same language as the document.
+        """;
+
+    private async Task<string> AnalyzeFreeFormContentAsync(string content, CancellationToken ct)
+    {
+        var chatService = _kernel.GetRequiredService<IChatCompletionService>("chat");
+
+        var history = new ChatHistory();
+        history.AddSystemMessage(FreeFormAnalysisPrompt);
+        history.AddUserMessage(content.Length > 30_000 ? content[..30_000] : content);
+
+        try
+        {
+            var sb = new StringBuilder();
+            await foreach (var chunk in chatService.GetStreamingChatMessageContentsAsync(history, cancellationToken: ct))
+            {
+                if (chunk.Content is not null)
+                    sb.Append(chunk.Content);
+            }
+
+            return sb.ToString();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Free-form analysis failed");
+            return "Free-form document received. Please review the data in the debug page.";
+        }
     }
 
     private const string ExtractionPrompt = """
@@ -223,7 +302,16 @@ public sealed class DocumentExtractionJobHandler : IJobHandler<DocumentUploadJob
         
         {
           "taxYear": 2024,
-          "documentType": "BrokerageStatement" | "EmploymentConfirmation" | "PensionFundStatement" | "LifeInsuranceStatement" | "MortgageConfirmation" | "DonationReceipt",
+          "documentType": "BrokerageStatement" | "EmploymentConfirmation" | "PensionFundStatement" | "LifeInsuranceStatement" | "MortgageConfirmation" | "DonationReceipt" | "FreeForm",
+          "personalData": {
+            "firstName": null,
+            "lastName": null,
+            "dateOfBirth": null,
+            "personalIdNumber": null,
+            "taxOfficeCode": null,
+            "dependentChildrenCount": null,
+            "spouseIncome": null
+          },
           "employment": {
             "grossIncome": 0,
             "socialInsurance": 0,
@@ -251,8 +339,30 @@ public sealed class DocumentExtractionJobHandler : IJobHandler<DocumentUploadJob
             "mortgageInterest": 0,
             "donations": 0
           },
+          "rawContent": null,
           "summary": "Brief description of what was extracted"
         }
+        
+        DOCUMENT TYPE DETECTION:
+        - BrokerageStatement: monthly/quarterly stock plan statements with transactions
+        - EmploymentConfirmation: Potvrzení o zdanitelných příjmech (annual wage statement)
+        - PensionFundStatement: penzijní spoření/připojištění annual report
+        - LifeInsuranceStatement: životní pojištění annual confirmation
+        - MortgageConfirmation: mortgage interest confirmation from bank
+        - DonationReceipt: potvrzení o daru
+        - FreeForm: any document that doesn't match the above (free-text notes, user-provided data, etc.)
+        
+        FOR FREE-FORM DOCUMENTS:
+        - Set documentType to "FreeForm"
+        - Copy the FULL text content into "rawContent" field
+        - Still extract any personalData, employment, or deduction fields you can identify
+        - The rawContent will be analyzed by a specialized agent later
+        
+        PERSONAL DATA:
+        - Extract name, date of birth, rodné číslo (personal ID), tax office code whenever found
+        - dependentChildrenCount: number of dependent children if mentioned
+        - spouseIncome: spouse's annual income if mentioned (relevant for spouse tax credit)
+        - Dates in yyyy-MM-dd format
         
         CRITICAL — TAX YEAR DETECTION:
         - The taxYear is the CALENDAR YEAR in which the transactions occurred.
@@ -297,15 +407,31 @@ internal sealed class ExtractionResult
 {
     public int TaxYear { get; set; }
     public string? DocumentType { get; set; }
+    public PersonalDataResult? PersonalData { get; set; }
     public EmploymentData? Employment { get; set; }
     public List<StockTransactionData>? StockTransactions { get; set; }
     public DeductionData? Deductions { get; set; }
+    public string? RawContent { get; set; }
     public string? Summary { get; set; }
+
+    public bool IsFreeForm => string.Equals(DocumentType, "FreeForm", StringComparison.OrdinalIgnoreCase);
 
     public int TransactionCount =>
         (StockTransactions?.Count ?? 0) +
         (Employment is not null ? 1 : 0) +
-        (Deductions is not null ? 1 : 0);
+        (Deductions is not null ? 1 : 0) +
+        (PersonalData is not null ? 1 : 0);
+}
+
+internal sealed class PersonalDataResult
+{
+    public string? FirstName { get; set; }
+    public string? LastName { get; set; }
+    public string? DateOfBirth { get; set; }
+    public string? PersonalIdNumber { get; set; }
+    public string? TaxOfficeCode { get; set; }
+    public int? DependentChildrenCount { get; set; }
+    public decimal? SpouseIncome { get; set; }
 }
 
 internal sealed class EmploymentData

@@ -10,10 +10,14 @@ namespace TaxAdvisorBot.Infrastructure.Output;
 public sealed class TaxReturnOutputService : ITaxReturnOutputService
 {
     private readonly StockCalculationTableGenerator _tableGenerator;
+    private readonly PdfTaxDeclarationGenerator _pdfGenerator;
 
-    public TaxReturnOutputService(StockCalculationTableGenerator tableGenerator)
+    public TaxReturnOutputService(
+        StockCalculationTableGenerator tableGenerator,
+        PdfTaxDeclarationGenerator pdfGenerator)
     {
         _tableGenerator = tableGenerator;
+        _pdfGenerator = pdfGenerator;
     }
 
     public Task<byte[]> GenerateCalculationTableAsync(TaxReturn taxReturn, CancellationToken ct = default)
@@ -30,8 +34,8 @@ public sealed class TaxReturnOutputService : ITaxReturnOutputService
 
     public Task<byte[]> GeneratePdfAsync(TaxReturn taxReturn, CancellationToken ct = default)
     {
-        // TODO: Task 015c — DPFO PDF form generation
-        throw new NotImplementedException("DPFO PDF declaration not yet implemented (task 015c).");
+        var pdf = _pdfGenerator.Generate(taxReturn);
+        return Task.FromResult(pdf);
     }
 
     public async Task<byte[]> GenerateAllAsync(TaxReturn taxReturn, CancellationToken ct = default)

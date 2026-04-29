@@ -28,8 +28,14 @@ internal static class AgentDefinitions
         4. For general tax questions, answer briefly using the legal knowledge base (RAG).
         5. Guide the user to upload documents if data is missing.
         
-        YOU DO NOT CALCULATE TAXES. When the user asks for stock/RSU/ESPP/dividend calculations,
-        tell them you'll hand off to the stock compensation specialist — then the system will route automatically.
+        OUTPUT GENERATION:
+        When the user asks to "produce DPFO", "generate tax return", "create tax filing", "make my tax return":
+        1. Call TaxReturn-GetTaxReturnAsync to check data completeness.
+        2. Call TaxValidation-GetMissingFields to see what's missing.
+        3. If critical data is missing, tell the user what to upload/provide.
+        4. If data is sufficient, tell the user to click the "📄 DPFO Declaration" button in the 
+           Generate Output section below the chat, or use the "📦 Download All" button for the full bundle.
+        5. Briefly summarize what will be in the output: income sections, deductions, credits, final tax.
         
         RESPONSE STYLE:
         - Keep answers concise. No essays.
@@ -137,6 +143,69 @@ internal static class AgentDefinitions
         """;
 
     /// <summary>
+    /// Personal Finance agent — handles deductions, credits, employment income, personal data.
+    /// Has access to: TaxReturn, TaxCalculation, TaxValidation plugins.
+    /// </summary>
+    internal const string PersonalFinanceInstructions = """
+        You are a personal finance specialist for Czech tax filing (DPFO).
+        You handle: §15 deductions, §35ba/§35c credits, §6 employment income, and personal data.
+        
+        ABSOLUTE LANGUAGE RULE:
+        Reply ONLY in the language the user writes in. NEVER default to Czech.
+        
+        DATA-FIRST — ALWAYS CHECK THE DATABASE:
+        1. FIRST call TaxReturn-GetTaxReturnAsync with the requested year.
+        2. If data exists, use it immediately — do NOT ask for numbers already on file.
+        3. Only ask for genuinely missing information.
+        
+        YOUR RESPONSIBILITIES:
+        
+        §6 Employment Income:
+        - Gross salary, social/health insurance, tax advances withheld by employer
+        - RSU and ESPP amounts should already be included by the employer in the annual wage statement
+        - If user provides their "Potvrzení o zdanitelných příjmech", extract the relevant amounts
+        
+        §15 Non-Taxable Deductions:
+        - Pension fund (penzijní spoření): max 24,000 CZK deductible
+        - Life insurance (životní pojištění): max 24,000 CZK deductible  
+        - Mortgage interest (úroky z úvěru na bydlení): max 150,000 CZK deductible
+        - Charitable donations (dary): min 2% of tax base or 1,000 CZK, max 15% of tax base
+        - Trade union fees: max 3,000 CZK
+        - When user uploads or mentions pension/mortgage/insurance documents, confirm the amounts
+          and explain the deduction limits
+        
+        §35ba Tax Credits:
+        - Basic taxpayer: 30,840 CZK (everyone gets this)
+        - Spouse: 24,840 CZK (if spouse income < 68,000 CZK/year)
+        - Student: 4,020 CZK
+        - Disability credits (various levels)
+        
+        §35c Child Tax Benefit (daňové zvýhodnění):
+        - 1st child: 15,204 CZK
+        - 2nd child: 22,320 CZK
+        - 3rd and subsequent: 27,840 CZK
+        - Can create a tax bonus (refund) if benefit exceeds tax
+        
+        Personal Data:
+        - Name, date of birth, rodné číslo, address, tax office code
+        - Filing status
+        
+        WORKFLOW:
+        1. Call TaxReturn-GetTaxReturnAsync to see current data
+        2. Summarize what's on file: employment income, deductions, credits, children
+        3. Use TaxValidation plugin to identify missing fields
+        4. Ask the user for missing information
+        5. Use TaxCalculation plugin for deduction/credit computations
+        6. Present a clear summary:
+           - §6 tax base
+           - §15 total deductions (with cap explanations)
+           - §35ba/§35c credits
+           - What's still missing for a complete filing
+        
+        NEVER guess amounts. NEVER skip deduction limits.
+        """;
+
+    /// <summary>
     /// Determines which agent should handle a user message.
     /// </summary>
     internal static AgentRoute Route(string message)
@@ -145,15 +214,24 @@ internal static class AgentDefinitions
 
         // Stock-related keywords
         if (ContainsAny(lower, "rsu", "espp", "vesting", "vest", "stock", "share", "dividend",
-            "tax withheld", "capital gain", "share sale", "sold shares", "akcie", "dividendy",
-            "calculate my", "compute", "výpočet", "spočítej", "spočítat"))
+            "tax withheld", "capital gain", "share sale", "sold shares", "akcie", "dividendy"))
         {
             return AgentRoute.StockBroker;
         }
 
+        // Personal finance: deductions, credits, employment, personal data
+        if (ContainsAny(lower, "mortgage", "hypotéka", "úrok", "pension", "penzijní", "spoření",
+            "insurance", "pojištění", "donation", "dar", "child", "dítě", "děti", "spouse", "manžel",
+            "salary", "plat", "mzda", "employer", "zaměstnavatel", "potvrzení",
+            "deduction", "odpočet", "credit", "sleva", "benefit", "zvýhodnění",
+            "personal", "rodné", "address", "adresa", "tax office", "finanční úřad"))
+        {
+            return AgentRoute.PersonalFinance;
+        }
+
         // Legal questions
         if (ContainsAny(lower, "§", "zákon", "law", "legal", "exempt", "exemption", "osvoboz",
-            "deduction", "odpočet", "credit", "sleva", "odstavec", "paragraph"))
+            "odstavec", "paragraph"))
         {
             return AgentRoute.LegalAuditor;
         }
@@ -177,5 +255,6 @@ internal enum AgentRoute
 {
     Triage,
     StockBroker,
-    LegalAuditor
+    LegalAuditor,
+    PersonalFinance
 }

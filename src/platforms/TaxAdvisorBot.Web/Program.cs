@@ -184,6 +184,15 @@ app.MapGet("/api/output/table", async (int? year, ITaxReturnOutputService output
     return Results.File(pdf, "application/pdf", $"stock-calculation-{taxYear}.pdf");
 });
 
+app.MapGet("/api/output/dpfo", async (int? year, ITaxReturnOutputService output, ITaxReturnRepository repo, CancellationToken ct) =>
+{
+    var taxYear = year ?? DateTime.Now.Year - 1;
+    var taxReturn = await repo.GetByYearAsync(taxYear, ct);
+    if (taxReturn is null) return Results.NotFound(new { error = $"No tax return for year {taxYear}" });
+    var pdf = await output.GeneratePdfAsync(taxReturn, ct);
+    return Results.File(pdf, "application/pdf", $"dpfo-{taxYear}.pdf");
+});
+
 // Seed sample tax return for testing
 app.MapPost("/api/test/seed", async (int? year, ITaxReturnRepository repo, CancellationToken ct) =>
 {

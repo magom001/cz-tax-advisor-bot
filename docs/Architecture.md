@@ -40,7 +40,7 @@ TaxAdvisorBot.slnx
 │   │   │   └── Enums/
 │   │   │       ├── TaxSection.cs                   # §6–§10
 │   │   │       ├── FilingStatus.cs                 # Draft → Complete
-│   │   │       ├── StockTransactionType.cs         # RsuVesting, EsppDiscount, ShareSale
+│   │   │       ├── StockTransactionType.cs         # RsuVesting, EsppDiscount, ShareSale, Dividend, TaxWithheld
 │   │   │       └── DocumentType.cs                 # Employment, brokerage, pension, etc.
 │   │   │
 │   │   ├── TaxAdvisorBot.Application/             # Interfaces, DTOs, options
@@ -65,10 +65,19 @@ TaxAdvisorBot.slnx
 │   │   └── TaxAdvisorBot.Infrastructure/          # Implementations
 │   │       ├── AI/
 │   │       │   ├── SemanticKernelRegistration.cs   # Kernel factory with 3 AI services
+│   │       │   ├── TaxAdvisorAgentService.cs       # Multi-agent router + streaming
+│   │       │   ├── Agents/
+│   │       │   │   └── AgentDefinitions.cs         # Agent prompts + keyword router
 │   │       │   └── Plugins/
 │   │       │       ├── TaxCalculationPlugin.cs     # §6, §10 tax, deductions, credits
 │   │       │       ├── TaxValidationPlugin.cs      # Missing-field detection
-│   │       │       └── ExchangeRatePlugin.cs       # ČNB rate conversion
+│   │       │       ├── ExchangeRatePlugin.cs       # ČNB rate conversion
+│   │       │       └── TaxReturnPlugin.cs          # Read tax return data from MongoDB
+│   │       ├── Documents/
+│   │       │   └── DocumentExtractionJobHandler.cs # LLM-based doc extraction + free-form analysis
+│   │       ├── Output/
+│   │       │   ├── StockCalculationTableGenerator.cs # QuestPDF calculation table
+│   │       │   └── TaxReturnOutputService.cs       # Output bundle orchestration
 │   │       ├── Search/
 │   │       │   ├── QdrantLegalSearchService.cs     # Hybrid vector + keyword search
 │   │       │   ├── LegalIngestionService.cs        # Real-time LLM chunking + embedding
@@ -83,21 +92,27 @@ TaxAdvisorBot.slnx
 │   │       │   ├── MongoUniformRateRepository.cs
 │   │       │   ├── MongoConversationRepository.cs
 │   │       │   └── MongoTaxReturnRepository.cs
+│   │       ├── Messaging/
+│   │       │   ├── InMemoryJobQueue.cs              # System.Threading.Channels job queue
+│   │       │   └── JobProcessorService.cs           # BackgroundService + IJobHandler<T>
 │   │       └── DependencyInjection.cs              # Wires everything into IHostApplicationBuilder
 │   │
 │   └── platforms/
 │       ├── TaxAdvisorBot.Web/                     # ASP.NET Core
-│       │   ├── Program.cs                         # API endpoints (search, ingest, rates)
-│       │   ├── wwwroot/index.html                 # Knowledge base UI + search
+│       │   ├── Program.cs                         # API endpoints (search, ingest, rates, chat, upload, output)
+│       │   ├── Hubs/ChatHub.cs                    # SignalR streaming chat
+│       │   ├── Services/SignalRNotificationService.cs
+│       │   ├── wwwroot/index.html                 # Main UI: chat, upload, knowledge base, rates, output
+│       │   ├── wwwroot/debug.html                 # Debug: parsed data inspector
 │       │   └── appsettings.json                   # Legal sources, uniform rates
 │       │
 │       └── TaxAdvisorBot.Cli/                     # Console app
 │           └── Program.cs                         # HostBuilder + ServiceDefaults
 │
 ├── tests/
-│   ├── TaxAdvisorBot.Domain.Tests/                # 37 tests — models, computed properties
+│   ├── TaxAdvisorBot.Domain.Tests/                # 39 tests — models, computed properties, dividends
 │   ├── TaxAdvisorBot.Application.Tests/           # 13 tests — options validation
-│   └── TaxAdvisorBot.Infrastructure.Tests/        # 41 tests — plugins, exchange rates
+│   └── TaxAdvisorBot.Infrastructure.Tests/        # 55 tests — plugins, exchange rates, golden cases
 │
 └── docs/
     ├── premise.md
@@ -138,7 +153,7 @@ Platforms (Web, CLI)
 | `IDocumentExtractionService` | Extracts structured data from uploaded documents (PDF, images) via LLM. Returns `TaxDocumentContext` with confidence scores. | LLM-based (gpt-4.1-mini) |
 | `ILegalSearchService` | Hybrid vector + keyword search over Czech tax law in Qdrant. Filters by `effective_year`. Returns ranked `LegalSearchResult` list. | `QdrantLegalSearchService` |
 | `ILegalIngestionService` | Scrapes legal text from URLs, chunks by § using LLM, embeds, stores in Qdrant. Supports `ResetCollectionAsync` for re-ingestion. | `LegalIngestionService` (streaming) |
-| `IConversationService` | Multi-turn AI chat. Streams responses via `IAsyncEnumerable<string>`. Maintains per-session history. | (planned) |
+| `IConversationService` | Multi-turn AI chat with agent routing. Streams responses via `IAsyncEnumerable<string>`. Routes to StockBroker, PersonalFinance, LegalAuditor, or Triage. | `TaxAdvisorAgentService` |
 | `IExchangeRateService` | ČNB daily exchange rates (API) + §38 uniform yearly rates (manual config). Caches in Redis. | `CnbExchangeRateService` |
 | `INotificationService` | Pushes `ProgressUpdate` and `ChatResponse` to connected clients. Platform-specific implementations. | (per platform) |
 | `IJobQueue` | Generic pub/sub for async background processing. `EnqueueAsync<T>` / `DequeueAsync<T>`. | In-memory channels (default) |
@@ -203,17 +218,85 @@ Three AI services are registered with the Kernel:
 
 | Service ID | Deployment | Use |
 |---|---|---|
-| `chat` | gpt-4.1 | Legal analysis, complex reasoning, citation generation |
+| `chat` | gpt-4.1 | Legal analysis, complex reasoning, free-form document analysis |
 | `fast-chat` | gpt-4.1-mini | Data extraction, ingestion chunking, simple Q&A |
 | `reasoning` | o4-mini | Multi-step tax verification (optional) |
 
-Three native C# plugins:
+Four native C# plugins:
 
 | Plugin | Functions | Description |
 |---|---|---|
 | `TaxCalculation` | `CalculateSection6TaxBase`, `CalculateSection10Tax`, `CalculateIncomeTax`, `ApplyDeductions`, `ApplyCredits` | Deterministic tax math — 15% base rate, 23% solidarity surcharge, §15 deduction caps, §35ba/§35c credits |
 | `TaxValidation` | `GetMissingFields` | Checks `TaxReturn` for incomplete data — personal details, employment consistency, stock transactions, foreign income |
 | `ExchangeRate` | `ConvertToCzkAsync`, `GetDailyRateAsync`, `GetUniformRateAsync` | ČNB exchange rates for foreign income conversion |
+| `TaxReturn` | `GetTaxReturnAsync`, `ListTaxReturnsAsync` | Reads persisted tax return data from MongoDB — stock transactions, deductions, credits |
+
+---
+
+## 7a. Multi-Agent Architecture
+
+The system uses **keyword-based routing** to dispatch user messages to specialized agents. Each agent has a focused responsibility and receives only the plugins it needs.
+
+```
+User Message
+    │
+    ▼
+AgentDefinitions.Route()  ─── keyword matching
+    │
+    ├── "rsu", "espp", "stock", "dividend" ──► StockBroker
+    ├── "mortgage", "pension", "child", "salary" ──► PersonalFinance
+    ├── "§", "law", "exempt", "paragraph" ──► LegalAuditor
+    └── (default) ──► Triage
+```
+
+### Agent Definitions
+
+| Agent | Role | Plugins | RAG | Model |
+|---|---|---|---|---|
+| **Triage** | First contact — summarizes data, guides user, routes to specialists | TaxReturn, TaxValidation | ✅ | gpt-4.1 |
+| **StockBroker** | Computes taxable base for RSU/ESPP/sales/dividends. Does NOT compute final tax. | TaxReturn, ExchangeRate | ❌ | gpt-4.1 |
+| **LegalAuditor** | Answers Czech tax law questions with § citations | (none) | ✅ | gpt-4.1 |
+| **PersonalFinance** | Deductions (§15), credits (§35ba/§35c), employment (§6), personal data | TaxReturn, TaxCalculation, TaxValidation | ✅ | gpt-4.1 |
+
+### Key Design Decisions
+
+- **StockBroker only computes taxable base** — final tax is the PersonalFinance agent's job (needs full picture: all income sections + deductions + credits).
+- **StockBroker has no RAG** — its rules are hardcoded (3-year exemption, ESPP net gain, §38f credit method). Czech legal text would clutter the context.
+- **Kernel cloning** — each agent gets a cloned kernel with selective plugin assignment via `Kernel.Clone()` + `Plugins.Add()`.
+- **WhiteboardProvider** is shared by all agents for cross-turn memory.
+- **Conversation history** is loaded for all agents from MongoDB, ensuring context continuity across agent switches.
+
+---
+
+## 7b. Document Extraction Pipeline
+
+Uploaded documents are processed in the background via `DocumentExtractionJobHandler`:
+
+```
+Upload (POST /api/documents/upload)
+    │
+    ▼
+InMemoryJobQueue (System.Threading.Channels)
+    │
+    ▼
+JobProcessorService (BackgroundService)
+    │
+    ▼
+DocumentExtractionJobHandler
+    ├── PdfPig / ContentExtractor → raw text
+    ├── gpt-4.1-mini → structured JSON extraction
+    │   ├── BrokerageStatement → StockTransactions (RSU/ESPP/Dividend/TaxWithheld)
+    │   ├── PensionFundStatement → Deductions.PensionFund
+    │   ├── MortgageConfirmation → Deductions.MortgageInterest
+    │   ├── EmploymentConfirmation → Employment (§6 data)
+    │   ├── Any document → PersonalData (name, rodné číslo, dependents)
+    │   └── FreeForm → rawContent (unstructured)
+    ├── ČNB rate fetch per stock transaction
+    ├── Save to MongoDB (TaxReturn)
+    └── If FreeForm:
+        └── gpt-4.1 analysis agent → deduction eligibility, credit analysis
+            └── Result sent via SignalR notification
+```
 
 ---
 
@@ -265,6 +348,14 @@ Seeded from `appsettings.json` on startup via `UniformRateSeeder` (`IHostedServi
 | GET | `/api/batch-ingest/status` | Poll batch ingestion progress |
 | GET | `/api/rates` | List all uniform exchange rates |
 | POST | `/api/rates` | Set a uniform exchange rate |
+| GET | `/api/chat` | SSE streaming chat (agent-routed) |
+| POST | `/api/documents/upload` | Multi-file upload → extraction pipeline |
+| GET | `/api/output/table?year=` | Download stock calculation table (PDF) |
+| GET | `/api/output/all?year=` | Download full output bundle (ZIP) |
+| GET | `/api/taxreturns` | List all tax returns (debug) |
+| GET | `/api/taxreturns/{year}` | Full tax return with transactions (debug) |
+| DELETE | `/api/taxreturns/{year}` | Delete tax return by year (debug) |
+| POST | `/api/test/seed` | Seed sample tax return for testing |
 
 ---
 
@@ -281,10 +372,23 @@ Seeded from `appsettings.json` on startup via `UniformRateSeeder` (`IHostedServi
 
 | Layer | Tests | Coverage |
 |---|---|---|
-| Domain (37) | `TaxReturn` computed properties, `StockTransaction` 3-year exemption, record equality | Models, enums |
+| Domain (39) | `TaxReturn` computed properties, `StockTransaction` 3-year exemption, ESPP discount, dividends, record equality | Models, enums |
 | Application (13) | Options validation — missing fields, invalid URLs, range constraints | IOptions |
-| Infrastructure (41) | Tax calculation plugin (income tax, deductions, credits), validation plugin, ČNB exchange rates (mocked HTTP + cache) | Plugins, services |
+| Infrastructure (55) | Tax calculation plugin (income tax, deductions, credits), validation plugin, ČNB exchange rates (mocked HTTP + cache), 10 golden-case tax scenarios | Plugins, services |
 
-Total: **91 tests**, all passing.
+Total: **107 tests**, all passing.
 
-Golden cases: `TaxAdvisorBot.Integration.Tests` (planned) — known tax scenarios with expected outputs.
+### Golden-Case Scenarios (Infrastructure)
+
+| Scenario | Description |
+|---|---|
+| Simple RSU | Employment + RSU, pension + mortgage deductions, basic credit |
+| RSU + ESPP + Exempt Sale | Net gain ESPP, 3-year exemption on share sale |
+| Taxable Share Sale | Held < 3 years, §10 income/expenses split |
+| Dividends (full credit) | US 15% = CZ 15%, no additional tax |
+| Dividends (partial credit) | Foreign 10% < CZ 15%, difference payable |
+| Complete with children | Full return with child bonus calculation |
+| Low income refund | Child benefit exceeds tax → refund |
+| ESPP discount math | Exact FMV - purchase price × qty × rate |
+| Mixed exempt/taxable sales | Both exempt and taxable in same year |
+| High earner solidarity | 23% surcharge above threshold |
